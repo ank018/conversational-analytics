@@ -1,0 +1,21 @@
+{
+  "revenue": 13494400.74001409,
+  "revenue_all_statuses": 13591643.70001419,
+  "revenue_with_freight": 15735527.029998751,
+  "total_paid": 16008872.119998764,
+  "revenue_naive_payment_join": 14105767.000015074,
+  "order_count": 98207.0,
+  "order_count_with_items": 98199.0,
+  "customers_unique": 94990.0,
+  "customers_by_customer_id": 98207.0,
+  "repeat_customers": 2888.0,
+  "average_order_value": 137.41892218861344,
+  "average_item_price": 120.37716648392154,
+  "items_sold": 112101.0,
+  "avg_delivery_days": 12.496848761272934,
+  "on_time_rate": 0.9188763346117964,
+  "avg_review_score": 4.08642062404257,
+  "avg_review_score_dedup": 4.088801951021238,
+  "revenue_lost_to_inner_category_join": 183813.13000081852,
+  "payments_on_itemless_orders": 162591.95000000007
+}

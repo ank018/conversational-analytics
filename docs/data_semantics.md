@@ -93,6 +93,9 @@ JOIN orders o ON o.order_id = oi.order_id
 WHERE o.order_status NOT IN ('canceled', 'unavailable')
 ```
 
+**Reference value: R$13,494,400.74.** The status exclusion costs R$97,242.96,
+0.72% of the unfiltered total.
+
 Never join `order_payments` in the same query as `order_items`. If both are
 needed, aggregate each to order level in separate CTEs first.
 
@@ -148,22 +151,34 @@ omitted.
 
 ## 4. Structural traps
 
-Joins that produce wrong answers without producing errors.
+Joins and counts that produce wrong answers without producing errors.
+Severity is measured under the canonical definitions in §3, not asserted.
 
-| Trap | Effect |
-|---|---|
-| `order_items` joined to `order_payments` | Revenue inflated 4.5% |
-| `customers` joined to `geolocation` | 99,441 rows become 15,083,455 — **151.7x** |
-| Inner join to `product_category_translation` | 623 products, R$185,050 lost |
-| Inner join `orders` to `order_items` | 775 orders vanish from the denominator |
-| Counting `customer_id` | Returns order count |
-| Averaging item price for AOV | Returns item value, not order value |
+| Trap | Measured effect | Severity |
+|---|---|---|
+| `customers` joined to `geolocation` | 99,441 rows become 15,083,455 (**151.7x**) | severe |
+| Averaging item price for AOV | 12.40% understated | high |
+| `order_items` joined to `order_payments` | revenue 4.53% overstated | high |
+| Counting `customer_id` as customers | 3.39% overstated | high |
+| Inner join to `product_category_translation` | R$183,813 lost, 1.36% | moderate |
+| Inner join `orders` to `order_items` | 8 orders | negligible |
+
+The last row was originally recorded as a major trap on the strength of 775
+item-less orders. Under the exclusion rule in 2.2, 767 of those are already
+removed as cancelled or unavailable and only 8 remain. **The decision to
+exclude them eliminated the trap.** It is retained here because a question
+phrased to include all statuses re-opens it.
 
 The geolocation join is the most dangerous in the schema. The table averages
-52.6 rows per zip prefix, but the realised fan-out is three times that,
+52.6 rows per zip prefix, but the realised fan-out is nearly three times that,
 because customers concentrate in dense city postcodes. `customers` and
 `sellers` already carry city and state; geolocation is needed only for
 coordinates, and then only via a de-duplicated subquery.
+
+Two figures are worth knowing because they are counter-intuitive rather than
+dangerous: average order value is **R$137.42**, and only **3.04% of customers
+(2,888 of 94,990) ever place a second order**. A questioner assuming ordinary
+e-commerce repeat rates will read the correct answer as an error.
 
 ---
 
@@ -204,14 +219,26 @@ system resolves ambiguity correctly.
 
 ---
 
-## 7. Open items
+## 7. Resolved and open
 
-1. Revenue under the exclusion rule in 2.2 has not yet been computed;
-   `sum(price)` above covers all statuses. `src/02b_reference_values.py`
-   settles it.
-2. The R$165k payments-over-items gap is *attributed* to the 775 item-less
-   orders on the arithmetic (≈R$213 each, against a mean order value near
-   R$160). Plausible, not verified.
-3. Whether the 789 duplicated `review_id` values are genuine duplicate
-   submissions or an export artefact is unresolved. It affects only review
-   counts, not scores.
+**Resolved by `src/02b_reference_values.py`.**
+
+1. Revenue under the exclusion rule is **R$13,494,400.74**, R$97,242.96 below
+   the unfiltered figure.
+2. The payments-over-items gap is confirmed as the item-less orders:
+   R$162,591.95 of R$165,318.88, **98.35%**. The residual R$2,727 falls within
+   the 359 orders where payments and order totals disagree.
+3. The duplicated `review_id` values do not affect analytics. Average review
+   score is 4.09 whether computed over rows or over distinct ids. The
+   duplication changes review *counts* only, and is recorded as a counting
+   convention rather than a trap.
+
+**Open.**
+
+4. A 3.04% repeat rate is low enough to warrant checking that
+   `customer_unique_id` genuinely resolves people across orders rather than
+   being reissued in some cases. If it is unreliable, every retention question
+   is unanswerable and that fact belongs in the README.
+5. Whether `not_defined` payment rows and 0-instalment rows (3 and 2 rows
+   respectively) should be filtered from payment-type breakdowns. Immaterial
+   to totals; matters only to share-of-payment-method questions.
