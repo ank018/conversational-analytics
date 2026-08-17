@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+.env
+.streamlit/secrets.toml
+reports/schema_ddl.sql
+.ipynb_checkpoints/
