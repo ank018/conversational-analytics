@@ -1,0 +1,293 @@
+# Gold batch 07 - traps
+#
+# Written specifically to raise trap coverage and to exercise structural
+# hazards that batches 01-05 touch only once or twice.
+#
+# Three new trap tags, all genuine rather than invented to hit a quota:
+#   order_line_vs_order - counting item rows when the question asks for orders
+#   missing_reviews     - an inner join to reviews drops orders without one
+#   timestamp_vs_date   - grouping by a timestamp makes every row its own group
+#   duplicate_key_fanout - joining on a key that repeats in the parent table
+#
+# q510 and q514 deliberately disagree about whether counting item rows is
+# correct. It is, in q510. It is not, in q514. A rule learned from one alone
+# would be wrong half the time.
+
+- id: q501
+  question: Which three sellers have handled the most orders?
+  kind: answerable
+  tier: 3
+  ordered: true
+  sql: |
+    SELECT oi.seller_id, count(DISTINCT oi.order_id) AS orders
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 3
+  tags: [sellers, count, ranking]
+  rules: [status_exclusion]
+  traps: [order_line_vs_order]
+  notes: >
+    DISTINCT is the question. A seller shipping three items on one order has
+    three rows in order_items but has handled one order. Without DISTINCT the
+    ranking can change, not just the counts.
+  verified: true
+
+- id: q503
+  question: How many orders were delivered to customers during 2017?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(*) AS delivered_in_2017
+    FROM orders
+    WHERE order_status = 'delivered'
+      AND order_delivered_customer_date >= DATE '2017-01-01'
+      AND order_delivered_customer_date <  DATE '2018-01-01'
+  tags: [count, delivery, dates]
+  rules: [delivery_definition]
+  traps: []
+  notes: >
+    "Delivered during 2017" filters on the delivery date, not the purchase
+    date. q009 and q102 both filter on purchase date, so a model that has
+    learned "dates mean order_purchase_timestamp" answers this one wrongly.
+    The two populations differ - orders bought in December 2017 and delivered
+    in January 2018 belong to one and not the other.
+  verified: true
+
+- id: q504
+  question: How many reviews have been submitted in total?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(*) AS reviews
+    FROM order_reviews
+  tags: [count, reviews]
+  rules: [review_count_dedup]
+  traps: []
+  notes: >
+    Expect 99,224 rows. Counting DISTINCT review_id gives 98,410 because 789
+    ids attach to more than one order. The semantics doc settles on rows; this
+    question exists to make that convention testable rather than implicit.
+  verified: true
+
+- id: q505
+  question: What is the average length of a product description?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT avg(product_description_lenght) AS avg_description_length
+    FROM products
+  tags: [average, products]
+  rules: []
+  traps: [column_confusion]
+  notes: >
+    Companion to q311. The column is misspelled in the source data as
+    product_description_lenght, and it holds a character count. A model
+    correcting the spelling to product_description_length gets a binder error
+    - a visible failure rather than a silent one, which makes this the
+    friendly half of the column-confusion pair.
+  verified: true
+
+- id: q506
+  question: What is the average revenue per customer?
+  kind: answerable
+  tier: 4
+  ordered: false
+  sql: |
+    SELECT sum(oi.price) / count(DISTINCT c.customer_unique_id)
+             AS revenue_per_customer
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN customers c ON c.customer_id = o.customer_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [revenue, customers, average]
+  rules: [customer_id_vs_unique, status_exclusion, freight_definition]
+  traps: [aov_item_vs_order]
+  notes: >
+    Dividing by customer_id instead returns average order value, 137.42 - a
+    number that already appears elsewhere in this set and looks entirely
+    correct. Because only 3.04% of customers repeat, the right answer is only
+    slightly higher, which makes the error nearly invisible.
+  verified: true
+
+- id: q507
+  question: Which state has the highest average order value?
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    SELECT c.customer_state, avg(t.order_total) AS avg_order_value
+    FROM (
+      SELECT o.order_id, o.customer_id, sum(oi.price) AS order_total
+      FROM orders o
+      JOIN order_items oi ON oi.order_id = o.order_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      GROUP BY 1, 2
+    ) t
+    JOIN customers c ON c.customer_id = t.customer_id
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [revenue, geography, average, ranking]
+  rules: [status_exclusion, freight_definition]
+  traps: [aov_item_vs_order, geolocation_fanout]
+  notes: >
+    Two traps at once - aggregate to order before averaging, and do not touch
+    geolocation. Expect a small northern state with few orders to win, which
+    is a real result rather than an error, but worth noting: no minimum volume
+    is imposed here, unlike q403.
+  verified: true
+
+- id: q508
+  question: What proportion of orders received a review?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(DISTINCT r.order_id) * 1.0 / count(DISTINCT o.order_id)
+             AS review_rate
+    FROM orders o
+    LEFT JOIN order_reviews r ON r.order_id = o.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [rate, reviews, left_join]
+  rules: [status_exclusion]
+  traps: [missing_reviews]
+  notes: >
+    Expect 0.99. The join must be LEFT: an inner join keeps only orders that
+    have a review, so the rate comes back as 1.00.
+
+    An earlier version of this note claimed the inner join returns "exactly
+    1.0" against a much lower correct value. The true gap is one point, not a
+    dramatic one - 768 of 98,207 orders lack a review. It is still a silent
+    failure, and a reported 100% review rate is still a claim no marketplace
+    should make, but the note oversold it.
+  verified: true
+
+- id: q509
+  question: What is the average total paid per order?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT avg(order_paid) AS avg_paid_per_order
+    FROM (
+      SELECT order_id, sum(payment_value) AS order_paid
+      FROM order_payments
+      GROUP BY 1
+    )
+  tags: [average, payments, cte]
+  rules: []
+  traps: [payment_fanout, aov_item_vs_order]
+  notes: >
+    Aggregate payments to order level first. Averaging payment_value directly
+    gives average payment, which is lower because instalments and vouchers
+    split an order across several rows.
+  verified: true
+
+- id: q510
+  question: Which single product has been sold the most times?
+  kind: answerable
+  tier: 3
+  ordered: true
+  sql: |
+    SELECT oi.product_id, count(*) AS units_sold
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [products, count, ranking]
+  rules: [status_exclusion]
+  traps: [order_line_vs_order]
+  notes: >
+    Here counting item rows is CORRECT - each row is one unit sold. The exact
+    opposite of q501, where rows had to be collapsed to orders. Included so
+    that "always use DISTINCT" is not learnable from this set.
+  verified: true
+
+- id: q511
+  question: How many people are registered as customers?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(DISTINCT customer_unique_id) AS people
+    FROM customers
+  tags: [count, customers]
+  rules: [customer_id_vs_unique]
+  traps: []
+  notes: >
+    Expect 96,096. Everyone in the customers table, whether or not their order
+    survived the status filter - the explicit counterpart to q104's 94,990 and
+    the twin of ambiguous q207. The 1,106 difference is people whose only
+    orders were cancelled or unavailable.
+
+    This figure was asserted in q207's note before it was measured. It happens
+    to be correct, but a recalled number and a measured number are not the
+    same thing, and the note there should now cite this query rather than
+    memory.
+  verified: true
+
+- id: q512
+  question: Which single day saw the most orders?
+  kind: answerable
+  tier: 2
+  ordered: true
+  sql: |
+    SELECT cast(order_purchase_timestamp AS DATE) AS day, count(*) AS orders
+    FROM orders
+    WHERE order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [count, time_series, ranking]
+  rules: [status_exclusion]
+  traps: [timestamp_vs_date]
+  notes: >
+    The cast is the question. Grouping by the raw timestamp makes almost every
+    order its own group, and the answer becomes "one order, at 14:32:07" -
+    which runs, returns a row, and is nonsense. Expect Black Friday 2017.
+  verified: true
+
+- id: q513
+  question: What share of the money received came through credit cards?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT sum(CASE WHEN payment_type = 'credit_card' THEN payment_value
+                    ELSE 0 END) / sum(payment_value) AS credit_card_share
+    FROM order_payments
+  tags: [payments, share]
+  rules: []
+  traps: []
+  notes: >
+    Money, not payment count - q005 already covers counts, and the two give
+    different shares because credit card payments are larger on average.
+  verified: true
+
+- id: q514
+  question: How many orders included an item where freight cost more than the item itself?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(DISTINCT oi.order_id) AS orders
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND oi.freight_value > oi.price
+  tags: [count, freight, orders]
+  rules: [status_exclusion]
+  traps: [order_line_vs_order]
+  notes: >
+    The question asks for orders, the filter applies to item rows, so DISTINCT
+    is required. Contrast q510, where counting rows is right. The difference is
+    entirely in the noun the question uses.
+  verified: true

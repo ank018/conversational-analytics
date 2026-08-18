@@ -66,6 +66,13 @@ Other non-delivered statuses (`shipped`, `invoiced`, `processing`, `created`,
 `approved`) **are** included: those orders are live commerce that has not yet
 completed.
 
+**Scope.** The exclusion applies to revenue, order counts, item counts, and
+customer counts derived through orders. It does **not** apply to counts of
+payment rows or review rows aggregated from their own tables without reference
+to order status — q005 and q111 are correct without it. Where a question is
+about the customers table itself rather than about ordering behaviour (q511),
+the exclusion also does not apply.
+
 ### 2.3 The marketing funnel tables are retained
 
 `marketing_qualified_leads` and `closed_deals` are kept despite covering only
@@ -157,11 +164,24 @@ Severity is measured under the canonical definitions in §3, not asserted.
 | Trap | Measured effect | Severity |
 |---|---|---|
 | `customers` joined to `geolocation` | 99,441 rows become 15,083,455 (**151.7x**) | severe |
-| Averaging item price for AOV | 12.40% understated | high |
-| `order_items` joined to `order_payments` | revenue 4.53% overstated | high |
+| Averaging item price for AOV (`aov_item_vs_order`) | 12.40% understated | high |
+| `order_items` joined to `order_payments` (`payment_fanout`) | revenue 4.53% overstated | high |
 | Counting `customer_id` as customers | 3.39% overstated | high |
+| `timestamp_vs_date` | Grouping by a raw timestamp makes almost every row its own group; the answer becomes "one order, at 14:32:07" | high |
+| `order_line_vs_order` | Counting item rows where the question asks for orders | high |
+| `duplicate_key_fanout` | Joining on a key that repeats in the parent table — a seller recruited via two leads has two `closed_deals` rows | moderate |
 | Inner join to `product_category_translation` | R$183,813 lost, 1.36% | moderate |
+| `column_confusion` | `product_name_lenght` and `product_description_lenght` are character counts, not physical dimensions, and sit beside `product_length_cm` | moderate |
+| `review_fanout` | Joining reviews through `order_items` counts one review once per item line, weighting multi-item orders and shifting rankings | moderate |
+| `missing_reviews` | An inner join to reviews drops the 768 orders without one; a review-rate question then returns 1.00 against a true 0.99 | low |
 | Inner join `orders` to `order_items` | 8 orders | negligible |
+
+Three of these have a counter-example in the gold set, deliberately, so that
+no rule is learnable in the wrong direction: `order_line_vs_order` is an error
+in q501 and q514 but correct behaviour in q510; the LEFT join required by
+`category_inner_join` in q106 is wrong in q320, where the question names a
+category that must be translated; and `missing_reviews` requires a LEFT join
+in q508 where q302 correctly uses an inner one.
 
 The last row was originally recorded as a major trap on the strength of 775
 item-less orders. Under the exclusion rule in 2.2, 767 of those are already
@@ -195,6 +215,13 @@ Orders run 2016-09-04 to 2018-10-17, but the usable window is narrower:
 spanning 2016 or late 2018 compare a full period against a near-empty one and
 will look like collapse or explosive growth. Questions touching those edges
 belong in the gold set as traps, with the correct answer stating the caveat.
+
+**The marketing funnel tables cover a different period again.**
+`marketing_qualified_leads` runs to roughly May 2018 — a question asking for
+leads by month across 2018 returns five rows, not eight or twelve. Funnel
+activity and marketplace activity therefore cannot be compared month-for-month
+without stating the mismatch, and a chart placing them side by side will show
+a spurious collapse in lead generation from June 2018.
 
 ---
 

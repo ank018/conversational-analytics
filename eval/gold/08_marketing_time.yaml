@@ -1,0 +1,256 @@
+# Gold batch 08 - marketing funnel and time intervals
+#
+# Two purposes. The marketing tables have carried no answerable questions so
+# far, only the unsupported q205, so funnel_coverage has no sample to measure
+# against at stage 11. And the five order date columns support several
+# distinct intervals that batch 01 touches only once.
+#
+# Every funnel question below is answerable in isolation but must not be
+# generalised to the marketplace - only 380 of 842 closed deals match a seller,
+# 12.3% of sellers. That constraint is what funnel_coverage tags.
+
+- id: q601
+  question: How many marketing leads were first contacted in each month of 2018?
+  kind: answerable
+  tier: 2
+  ordered: true
+  sql: |
+    SELECT strftime(first_contact_date, '%Y-%m') AS month,
+           count(*) AS leads
+    FROM marketing_qualified_leads
+    WHERE first_contact_date >= DATE '2018-01-01'
+      AND first_contact_date <  DATE '2019-01-01'
+    GROUP BY 1
+    ORDER BY 1
+  tags: [count, marketing, time_series]
+  rules: [funnel_coverage]
+  traps: []
+  notes: >
+    Returns five rows, not twelve - marketing_qualified_leads stops in roughly
+    May 2018, while the orders tables run to August. That mismatch is now
+    recorded in section 5 of the semantics doc; it was not there when this
+    question was written, and it is the kind of gap that makes a side-by-side
+    chart of leads against orders show a collapse that never happened.
+
+    The date filter also confirms first_contact_date was read as a real date
+    rather than text, so comparisons on this table are date arithmetic and not
+    string comparison working by accident.
+  verified: true
+
+- id: q602
+  question: How many leads became closed deals?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(*) AS closed_deals
+    FROM closed_deals
+  tags: [count, marketing]
+  rules: [funnel_coverage]
+  traps: []
+  notes: >
+    Expect 842. The count is answerable; the *rate* is not, which is why q205
+    is marked unsupported. The distinction is that a rate invites a conclusion
+    about the marketplace and this number does not.
+  verified: true
+
+- id: q603
+  question: Which lead origin produced the most closed deals?
+  kind: answerable
+  tier: 3
+  ordered: true
+  sql: |
+    SELECT m.origin, count(*) AS deals
+    FROM closed_deals d
+    JOIN marketing_qualified_leads m ON m.mql_id = d.mql_id
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [marketing, group_by, ranking]
+  rules: [funnel_coverage]
+  traps: []
+  notes: >
+    mql_id is the join key between the two funnel tables. Some origins are
+    null in the source; they form their own group rather than being dropped.
+  verified: true
+
+- id: q604
+  question: How much revenue have sellers recruited through the marketing funnel generated?
+  kind: answerable
+  tier: 4
+  ordered: false
+  sql: |
+    WITH funnel_sellers AS (
+      SELECT DISTINCT seller_id
+      FROM closed_deals
+      WHERE seller_id IS NOT NULL
+    )
+    SELECT sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN funnel_sellers f ON f.seller_id = oi.seller_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [revenue, marketing, sellers, cte]
+  rules: [funnel_coverage, status_exclusion, freight_definition]
+  traps: [duplicate_key_fanout]
+  notes: >
+    The DISTINCT matters: a seller recruited through two separate leads has
+    two rows in closed_deals, and joining directly would count their revenue
+    twice. Only 380 of 842 deals match a seller at all, so this figure covers
+    a small and non-random slice - it is not "revenue attributable to
+    marketing" for the marketplace.
+  verified: true
+
+- id: q605
+  question: On average, how long does it take for an order to reach the carrier after purchase?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT avg(date_diff('day', order_purchase_timestamp,
+                         order_delivered_carrier_date)) AS avg_days_to_carrier
+    FROM orders
+    WHERE order_delivered_carrier_date IS NOT NULL
+  tags: [average, dates, fulfilment]
+  rules: [delivery_definition]
+  traps: []
+  notes: >
+    The handling interval, distinct from q007's end-to-end delivery time.
+    1,783 orders have no carrier date and are excluded.
+  verified: true
+
+- id: q606
+  question: On average, how long does the carrier take to deliver after collection?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT avg(date_diff('day', order_delivered_carrier_date,
+                         order_delivered_customer_date)) AS avg_transit_days
+    FROM orders
+    WHERE order_delivered_carrier_date IS NOT NULL
+      AND order_delivered_customer_date IS NOT NULL
+  tags: [average, dates, delivery]
+  rules: [delivery_definition]
+  traps: []
+  notes: >
+    Transit time. Together q605 and q606 should roughly decompose q007's 12.50
+    days - roughly, because the three filters keep different row sets.
+  verified: true
+
+- id: q607
+  question: How many orders took more than a day to be approved after purchase?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT count(*) AS slow_approvals
+    FROM orders
+    WHERE order_approved_at IS NOT NULL
+      AND date_diff('day', order_purchase_timestamp, order_approved_at) > 1
+  tags: [count, dates, payments]
+  rules: []
+  traps: []
+  notes: >
+    Uses the fifth date column, which no other question touches. 160 orders
+    have no approval date and are excluded rather than counted as slow.
+  verified: true
+
+- id: q608
+  question: In which month did the most customers place their first ever order?
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    WITH first_order AS (
+      SELECT c.customer_unique_id,
+             min(o.order_purchase_timestamp) AS first_purchase
+      FROM customers c
+      JOIN orders o ON o.customer_id = c.customer_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      GROUP BY 1
+    )
+    SELECT strftime(first_purchase, '%Y-%m') AS month,
+           count(*) AS new_customers
+    FROM first_order
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [customers, cohort, time_series, cte]
+  rules: [customer_id_vs_unique, status_exclusion]
+  traps: []
+  notes: >
+    Extends q407 from a count to a ranking. Because repeat customers are only
+    3.04%, this should land close to the busiest month overall - which makes a
+    wrong answer built on order counts rather than first orders hard to spot.
+  verified: true
+
+- id: q609
+  question: What was revenue in the last complete month of data?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND o.order_purchase_timestamp >= DATE '2018-08-01'
+      AND o.order_purchase_timestamp <  DATE '2018-09-01'
+  tags: [revenue, time_filter]
+  rules: [partial_years, status_exclusion, freight_definition]
+  traps: []
+  notes: >
+    August 2018. September holds 16 orders and October 4, so a model taking
+    the maximum date and stepping back one month lands on a near-empty month
+    and returns a plausible-looking collapse in revenue.
+  verified: true
+
+- id: q610
+  question: How many orders were placed at weekends?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT count(*) AS weekend_orders
+    FROM orders
+    WHERE order_status NOT IN ('canceled', 'unavailable')
+      AND dayofweek(order_purchase_timestamp) IN (0, 6)
+  tags: [count, dates]
+  rules: [status_exclusion]
+  traps: []
+  notes: >
+    Expect 22,595, about 23% of orders. DuckDB's dayofweek numbers Sunday as 0
+    and Saturday as 6.
+
+    23% sits below the 28.6% a flat distribution would give, which is the
+    evidence the convention is right rather than a reason to doubt it: this
+    marketplace peaks on Monday and Tuesday and is quietest at weekends, so
+    the true share should be under the flat rate. Had the numbering been off
+    by one and caught Sunday and Monday, the figure would have come out well
+    above 28.6%.
+  verified: true
+
+- id: q611
+  question: What share of 2018 revenue came from Sao Paulo state?
+  kind: answerable
+  tier: 4
+  ordered: false
+  sql: |
+    SELECT sum(CASE WHEN c.customer_state = 'SP' THEN oi.price ELSE 0 END)
+           / sum(oi.price) AS sp_share
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN customers c ON c.customer_id = o.customer_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND o.order_purchase_timestamp >= DATE '2018-01-01'
+      AND o.order_purchase_timestamp <  DATE '2019-01-01'
+  tags: [revenue, geography, share, time_filter]
+  rules: [status_exclusion, partial_years, freight_definition]
+  traps: [geolocation_fanout]
+  notes: >
+    A share within a filtered period - both the numerator and denominator must
+    carry the same date filter. Computing the numerator with the filter and
+    the denominator without it produces a much smaller share that still looks
+    like a percentage.
+  verified: true
