@@ -1,0 +1,83 @@
+# Gold batch 03 - ambiguous and unsupported
+#
+# These carry no SQL, by design. The correct behaviour is to ask a clarifying
+# question or to say the data cannot answer it.
+#
+# Almost no text-to-SQL benchmark contains this category, which is why almost
+# every text-to-SQL system answers such questions confidently and wrongly.
+# Scoring here is separate from execution accuracy - a system is right if it
+# declines or clarifies, and wrong if it produces a number.
+
+- id: q201
+  question: What is our profit margin?
+  kind: unsupported
+  tags: [finance]
+  rules: []
+  traps: []
+  notes: >
+    No cost data exists anywhere in the warehouse. There is no product cost,
+    no commission rate, no fulfilment cost. Any margin figure would be
+    fabricated. Correct behaviour: state that cost data is absent.
+  verified: true
+
+- id: q202
+  question: How many customers churned last month?
+  kind: unsupported
+  tags: [retention]
+  rules: []
+  traps: []
+  notes: >
+    Two independent failures. There is no subscription or membership concept,
+    so churn is undefined; and "last month" relative to today is two years
+    after the data ends. Correct behaviour: name both problems.
+  verified: true
+
+- id: q203
+  question: Show me sales.
+  kind: ambiguous
+  tags: [revenue]
+  rules: [freight_definition]
+  traps: []
+  notes: >
+    Underspecified on three axes at once - which revenue definition, over what
+    period, grouped by what. Correct behaviour: ask, rather than picking a
+    default silently. A system that returns a single total has guessed.
+  verified: true
+
+- id: q204
+  question: Which products are most popular?
+  kind: ambiguous
+  tags: [products, ranking]
+  rules: []
+  traps: []
+  notes: >
+    "Popular" could mean units sold, revenue, number of distinct orders, or
+    review score. These produce different rankings. Correct behaviour: ask
+    which measure is meant.
+  verified: true
+
+- id: q205
+  question: What is our lead conversion rate?
+  kind: unsupported
+  tags: [marketing]
+  rules: [funnel_coverage]
+  traps: []
+  notes: >
+    Computable in appearance - 842 closed deals against 8,000 qualified leads
+    - but only 380 of those deals match a seller in the marketplace, so the
+    funnel covers 12.3% of sellers and is not a random sample. Correct
+    behaviour: give the figure only with the coverage caveat, or decline.
+    This is the hardest question in the set: the naive answer runs, returns a
+    clean 10.5%, and is misleading.
+  verified: true
+
+- id: q206
+  question: How is the business doing this year?
+  kind: ambiguous
+  tags: [general]
+  rules: [partial_years]
+  traps: []
+  notes: >
+    No metric named, and "this year" has no referent in a dataset ending in
+    2018. Correct behaviour: ask which measure and which period.
+  verified: true

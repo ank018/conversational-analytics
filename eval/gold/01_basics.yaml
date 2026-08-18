@@ -1,0 +1,221 @@
+# Gold batch 01 - basics
+#
+# Tier 1 and 2. Single table or one join, straightforward aggregation.
+# These exist to establish a floor: a system that fails these is not working
+# at all, and the accuracy curve needs a region where everything succeeds.
+#
+# Set `verified: true` only after you have read the SQL, agreed it answers
+# the question as asked, and seen the result the verifier prints.
+
+- id: q001
+  question: How many orders have been placed in total?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(*) AS orders
+    FROM orders
+    WHERE order_status NOT IN ('canceled', 'unavailable')
+  tags: [count, orders]
+  rules: [status_exclusion]
+  traps: []
+  notes: >
+    Expect 98,207. The unfiltered count is 99,441; the difference is the
+    exclusion rule from docs/data_semantics.md 2.2. A model that omits the
+    filter is wrong by 1.24%.
+  verified: true
+
+- id: q002
+  question: How many sellers are on the marketplace?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(*) AS sellers
+    FROM sellers
+  tags: [count, sellers]
+  rules: []
+  traps: []
+  notes: Expect 3,095. No trap - a genuine floor question.
+  verified: true
+
+- id: q003
+  question: What is the average review score?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT avg(review_score) AS avg_score
+    FROM order_reviews
+  tags: [average, reviews]
+  rules: []
+  traps: []
+  notes: >
+    Expect 4.09. Deduplicating review_id gives the same value to two decimal
+    places, so the duplicate-id issue does not bite here.
+  verified: true
+
+- id: q004
+  question: How many products have no category assigned?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(*) AS uncategorised
+    FROM products
+    WHERE product_category_name IS NULL
+  tags: [count, products, nulls]
+  rules: []
+  traps: []
+  notes: Expect 610.
+  verified: true
+
+- id: q005
+  question: Which payment methods are used most often?
+  kind: answerable
+  tier: 1
+  ordered: true
+  sql: |
+    SELECT payment_type, count(*) AS payments
+    FROM order_payments
+    GROUP BY 1
+    ORDER BY 2 DESC
+  tags: [group_by, payments, ranking]
+  rules: []
+  traps: []
+  notes: >
+    Ordered result. Credit card leads with 76,795. Note the three rows typed
+    'not_defined' - open item 5 in the semantics doc.
+  verified: true
+
+- id: q006
+  question: Which city are most sellers based in?
+  kind: answerable
+  tier: 1
+  ordered: true
+  sql: |
+    SELECT seller_city, count(*) AS sellers
+    FROM sellers
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [group_by, sellers, ranking]
+  rules: []
+  traps: []
+  notes: Expect Sao Paulo.
+  verified: true
+
+- id: q007
+  question: What is the average delivery time in days?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT avg(date_diff('day', order_purchase_timestamp,
+                         order_delivered_customer_date)) AS avg_days
+    FROM orders
+    WHERE order_status = 'delivered'
+      AND order_delivered_customer_date IS NOT NULL
+  tags: [average, dates, delivery]
+  rules: [delivery_definition]
+  traps: []
+  notes: >
+    Expect 12.50. Four other intervals are constructible from the five date
+    columns; purchase-to-customer is the definition in the semantics doc.
+    Undelivered orders are excluded rather than counted as infinitely late.
+  verified: true
+
+- id: q008
+  question: What proportion of delivered orders arrived by the estimated date?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT avg(CASE WHEN order_delivered_customer_date
+                      <= order_estimated_delivery_date
+               THEN 1.0 ELSE 0.0 END) AS on_time_rate
+    FROM orders
+    WHERE order_status = 'delivered'
+      AND order_delivered_customer_date IS NOT NULL
+  tags: [rate, dates, delivery]
+  rules: [delivery_definition]
+  traps: []
+  notes: Expect 0.92.
+  verified: true
+
+- id: q009
+  question: How many orders were placed in each month of 2017?
+  kind: answerable
+  tier: 2
+  ordered: true
+  sql: |
+    SELECT strftime(order_purchase_timestamp, '%Y-%m') AS month,
+           count(*) AS orders
+    FROM orders
+    WHERE order_status NOT IN ('canceled', 'unavailable')
+      AND order_purchase_timestamp >= DATE '2017-01-01'
+      AND order_purchase_timestamp <  DATE '2018-01-01'
+    GROUP BY 1
+    ORDER BY 1
+  tags: [group_by, time_series, orders]
+  rules: [status_exclusion]
+  traps: []
+  notes: >
+    Twelve rows. November peaks - Black Friday. 2017 is chosen deliberately
+    because it is the only complete year.
+  verified: true
+
+- id: q010
+  question: Which state do the most customers come from?
+  kind: answerable
+  tier: 2
+  ordered: true
+  sql: |
+    SELECT c.customer_state, count(DISTINCT c.customer_unique_id) AS customers
+    FROM customers c
+    JOIN orders o ON o.customer_id = c.customer_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [group_by, customers, geography, ranking]
+  rules: [customer_id_vs_unique, status_exclusion]
+  traps: []
+  notes: >
+    Expect SP with 39,749. Two rules apply: count customer_unique_id rather
+    than customer_id, and exclude cancelled and unavailable orders. Omitting
+    the status filter gives 40,302 - SP still wins, so the ranking is right
+    and the number is wrong, which is the harder failure to notice.
+  verified: true
+
+- id: q011
+  question: How many distinct product categories exist in the catalogue?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(DISTINCT product_category_name) AS categories
+    FROM products
+    WHERE product_category_name IS NOT NULL
+  tags: [count, products]
+  rules: []
+  traps: []
+  notes: >
+    Counted from products, not from the translation table - 13 categories
+    appear in products with no translation row, so the two counts differ.
+  verified: true
+
+- id: q012
+  question: How many reviews gave the lowest possible score?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(*) AS one_star_reviews
+    FROM order_reviews
+    WHERE review_score = 1
+  tags: [count, reviews]
+  rules: []
+  traps: []
+  notes: Expect 11,424.
+  verified: true

@@ -1,0 +1,261 @@
+# Gold batch 02 - revenue and traps
+#
+# Tier 2 to 4. Every question here depends on a definition from
+# docs/data_semantics.md, or crosses one of the structural traps in section 4.
+# This is the batch the glossary is expected to move at stage 9.
+
+- id: q101
+  question: What was total revenue?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [revenue, sum]
+  rules: [status_exclusion, freight_definition]
+  traps: [payment_fanout]
+  notes: >
+    Expect 13,494,400.74. Three wrong-but-plausible answers exist:
+    15,735,527.03 including freight, 16,008,872.12 using payments, and
+    14,105,767.00 from joining items to payments. The last is the dangerous
+    one - it is 4.53% high and looks entirely normal.
+  verified: true
+
+- id: q102
+  question: What was total revenue in 2017?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND o.order_purchase_timestamp >= DATE '2017-01-01'
+      AND o.order_purchase_timestamp <  DATE '2018-01-01'
+  tags: [revenue, time_filter]
+  rules: [status_exclusion, freight_definition]
+  traps: []
+  notes: Date filter applies to purchase date, not delivery or approval date.
+  verified: true
+
+- id: q103
+  question: What is the average order value?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT avg(order_total) AS average_order_value
+    FROM (
+      SELECT o.order_id, sum(oi.price) AS order_total
+      FROM orders o
+      JOIN order_items oi ON oi.order_id = o.order_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      GROUP BY 1
+    )
+  tags: [revenue, average, cte]
+  rules: [status_exclusion]
+  traps: [aov_item_vs_order]
+  notes: >
+    Expect 137.42. Averaging order_items.price directly gives 120.38 - the
+    average item, not the average order. A 12.40% error that passes any
+    eyeball check.
+  verified: true
+
+- id: q104
+  question: How many distinct customers have placed an order?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(DISTINCT c.customer_unique_id) AS customers
+    FROM customers c
+    JOIN orders o ON o.customer_id = c.customer_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [count, customers]
+  rules: [customer_id_vs_unique, status_exclusion]
+  traps: []
+  notes: >
+    Expect 94,990. customer_id is issued per order, so counting it returns
+    98,207 - the order count wearing a customer's name, 3.39% high.
+  verified: true
+
+- id: q105
+  question: How many customers have ordered more than once?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(*) AS repeat_customers
+    FROM (
+      SELECT c.customer_unique_id
+      FROM customers c
+      JOIN orders o ON o.customer_id = c.customer_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      GROUP BY 1
+      HAVING count(DISTINCT o.order_id) > 1
+    )
+  tags: [count, customers, retention]
+  rules: [customer_id_vs_unique, status_exclusion]
+  traps: []
+  notes: >
+    Expect 2,888, which is 3.04% of customers. Counting customer_id instead
+    returns zero repeat customers, because customer_id is unique per order -
+    a wrong answer that looks like a finding.
+  verified: true
+
+- id: q106
+  question: Which product category generated the most revenue?
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    SELECT coalesce(t.product_category_name_english, 'unknown') AS category,
+           sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN products p ON p.product_id = oi.product_id
+    LEFT JOIN product_category_translation t
+      ON t.product_category_name = p.product_category_name
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [revenue, group_by, products, ranking]
+  rules: [status_exclusion, freight_definition]
+  traps: [category_inner_join]
+  notes: >
+    The translation join must be LEFT. An inner join drops 623 products
+    carrying 183,813 of revenue. Uncategorised products are reported as
+    'unknown', not silently omitted.
+  verified: true
+
+- id: q107
+  question: Which five sellers generated the most revenue?
+  kind: answerable
+  tier: 3
+  ordered: true
+  sql: |
+    SELECT oi.seller_id, sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 5
+  tags: [revenue, group_by, sellers, ranking]
+  rules: [status_exclusion]
+  traps: [payment_fanout]
+  notes: >
+    seller_id lives on order_items, so no join to sellers is needed. Joining
+    it anyway is harmless; joining order_payments is not.
+  verified: true
+
+- id: q108
+  question: How much revenue came from customers in Sao Paulo state?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN customers c ON c.customer_id = o.customer_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND c.customer_state = 'SP'
+  tags: [revenue, geography, join]
+  rules: [status_exclusion]
+  traps: [geolocation_fanout]
+  notes: >
+    customer_state is already on the customers table. Reaching for geolocation
+    turns 99,441 rows into 15,083,455 and multiplies the answer by roughly 150.
+  verified: true
+
+- id: q109
+  question: Which month had the highest revenue?
+  kind: answerable
+  tier: 3
+  ordered: true
+  sql: |
+    SELECT strftime(o.order_purchase_timestamp, '%Y-%m') AS month,
+           sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [revenue, time_series, ranking]
+  rules: [status_exclusion, partial_years]
+  traps: []
+  notes: >
+    Expect a month in late 2017 or the first half of 2018. September and
+    October 2018 hold 20 orders between them and cannot win, but a model that
+    misreads the window may report them.
+  verified: true
+
+- id: q110
+  question: What is the average number of items per order?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(*) * 1.0 / count(DISTINCT oi.order_id) AS items_per_order
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [average, orders, items]
+  rules: [status_exclusion]
+  traps: [itemless_orders]
+  notes: >
+    The denominator is orders that contain items. Using the full order count
+    instead is defensible but different, and the semantics doc does not
+    settle it - flag this one if you disagree.
+  verified: true
+
+- id: q111
+  question: How many orders included more than one payment method?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(*) AS orders_with_multiple_payment_types
+    FROM (
+      SELECT order_id
+      FROM order_payments
+      GROUP BY 1
+      HAVING count(DISTINCT payment_type) > 1
+    )
+  tags: [count, payments, having]
+  rules: []
+  traps: [payment_fanout]
+  notes: >
+    Aggregating payments alone, without touching order_items. This is the
+    shape a correct multi-fact query takes.
+  verified: true
+
+- id: q112
+  question: Compare total revenue in 2017 against 2018.
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    SELECT year(o.order_purchase_timestamp) AS year,
+           sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND year(o.order_purchase_timestamp) IN (2017, 2018)
+    GROUP BY 1
+    ORDER BY 1
+  tags: [revenue, time_series, comparison]
+  rules: [partial_years, status_exclusion]
+  traps: []
+  notes: >
+    The SQL is the standard, but the honest answer carries a caveat: 2018 data
+    stops in August, so the comparison is eight months against twelve. Used at
+    stage 9 to test whether the glossary surfaces the caveat.
+  verified: true
