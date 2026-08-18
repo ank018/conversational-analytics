@@ -1,0 +1,85 @@
+# Gold batch 06 - ambiguous and unsupported, continued
+#
+# The second half of the no-correct-answer set. Batch 03 covered obviously
+# impossible questions; these are closer to the line, and several look
+# answerable until you try.
+
+- id: q207
+  question: How many customers do we have?
+  kind: ambiguous
+  tags: [customers]
+  rules: [customer_id_vs_unique]
+  traps: []
+  notes: >
+    The deliberately underspecified twin of q104. Three answers: 96,096 people
+    in the customers table, 94,990 who placed a non-excluded order, or 99,441
+    if customer_id is miscounted. The first two are both defensible and differ
+    by roughly a thousand. Correct behaviour: ask whether all registered
+    customers or only those who ordered.
+  verified: true
+
+- id: q208
+  question: What was our best month?
+  kind: ambiguous
+  tags: [time_series]
+  rules: []
+  traps: []
+  notes: >
+    "Best" is unnamed. Highest revenue is November 2017; highest order count
+    may be a different month; highest average review score almost certainly
+    is. Correct behaviour: ask which measure.
+  verified: true
+
+- id: q209
+  question: How many products do we sell?
+  kind: ambiguous
+  tags: [products]
+  rules: []
+  traps: []
+  notes: >
+    Catalogue size is 32,951; products actually sold at least once is lower
+    (q307). The phrasing "do we sell" sits exactly between the two. Correct
+    behaviour: ask whether the catalogue or products with sales is meant.
+  verified: true
+
+- id: q210
+  question: What is our return rate?
+  kind: unsupported
+  tags: [operations]
+  rules: []
+  traps: []
+  notes: >
+    There is no returns table and no return status. order_status includes
+    'canceled' and 'unavailable', but both describe orders that failed before
+    delivery, not goods sent back. A model that computes a cancellation rate
+    and calls it a return rate has answered a different question without
+    saying so - the most dangerous kind of near-miss in this set.
+  verified: true
+
+- id: q211
+  question: What is the average customer lifetime value?
+  kind: unsupported
+  tags: [customers, finance]
+  rules: []
+  traps: []
+  notes: >
+    Two failures. Lifetime value normally requires margin, and no cost data
+    exists. And with 3.04% of customers ever ordering twice, a spend-per-
+    customer figure over a two-year window is not a lifetime and would be
+    almost identical to average order value. Correct behaviour: say margin
+    data is absent, and flag that the repeat rate makes the concept weak here.
+  verified: true
+
+- id: q212
+  question: Which sellers should we remove from the platform?
+  kind: unsupported
+  tags: [sellers]
+  rules: []
+  traps: []
+  notes: >
+    A business decision, not a query. The data supports inputs to it - review
+    scores, late delivery rates, volume - but no threshold exists in the
+    warehouse and none can be derived from it. Correct behaviour: offer the
+    relevant measures and ask what criteria should apply. A system that
+    returns a list of seller ids has invented a policy.
+  verified: true

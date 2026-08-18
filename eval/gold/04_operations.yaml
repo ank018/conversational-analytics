@@ -1,0 +1,373 @@
+# Gold batch 04 - operations, delivery, reviews, products
+#
+# Mostly tier 2 and 3. Moves the set away from revenue, which batch 02 covers
+# heavily, and into delivery, reviews and the product catalogue.
+#
+# Introduces two trap tags not in docs/data_semantics.md section 4:
+#   column_confusion - two similarly named columns measuring different things
+#   review_fanout    - joining reviews through order_items counts a review
+#                      once per item rather than once per order
+# Both need adding to the semantics doc before this batch is final.
+
+- id: q301
+  question: How many orders were delivered later than the estimated date?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT count(*) AS late_orders
+    FROM orders
+    WHERE order_status = 'delivered'
+      AND order_delivered_customer_date IS NOT NULL
+      AND order_delivered_customer_date > order_estimated_delivery_date
+  tags: [count, delivery, dates]
+  rules: [delivery_definition]
+  traps: []
+  notes: >
+    The complement of q008's on-time rate. Undelivered orders are excluded
+    rather than treated as infinitely late.
+  verified: true
+
+- id: q302
+  question: Do orders delivered late receive lower review scores?
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    SELECT CASE WHEN o.order_delivered_customer_date
+                     > o.order_estimated_delivery_date
+                THEN 'late' ELSE 'on_time' END AS delivery,
+           avg(r.review_score) AS avg_score,
+           count(*) AS reviews
+    FROM orders o
+    JOIN order_reviews r ON r.order_id = o.order_id
+    WHERE o.order_status = 'delivered'
+      AND o.order_delivered_customer_date IS NOT NULL
+    GROUP BY 1
+    ORDER BY 1
+  tags: [reviews, delivery, comparison]
+  rules: [delivery_definition]
+  traps: []
+  notes: >
+    Two rows. Reviews join to orders one-to-one here, so no fan-out - but 768
+    orders carry no review and drop out of the inner join. That is acceptable
+    for a comparison of means; it would not be for a count.
+  verified: true
+
+- id: q303
+  question: Which state has the longest average delivery time?
+  kind: answerable
+  tier: 3
+  ordered: true
+  sql: |
+    SELECT c.customer_state,
+           avg(date_diff('day', o.order_purchase_timestamp,
+                         o.order_delivered_customer_date)) AS avg_days
+    FROM orders o
+    JOIN customers c ON c.customer_id = o.customer_id
+    WHERE o.order_status = 'delivered'
+      AND o.order_delivered_customer_date IS NOT NULL
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [delivery, geography, ranking]
+  rules: [delivery_definition]
+  traps: [geolocation_fanout]
+  notes: >
+    customer_state is on the customers table. Expect a northern state - the
+    distance from the Sao Paulo seller base is large.
+  verified: true
+
+- id: q304
+  question: How many one-star reviews came from orders that were delivered late?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(*) AS late_one_star
+    FROM orders o
+    JOIN order_reviews r ON r.order_id = o.order_id
+    WHERE o.order_status = 'delivered'
+      AND o.order_delivered_customer_date IS NOT NULL
+      AND o.order_delivered_customer_date > o.order_estimated_delivery_date
+      AND r.review_score = 1
+  tags: [count, reviews, delivery]
+  rules: [delivery_definition]
+  traps: []
+  notes: Counts review rows, not distinct orders. Both are defensible; rows is the convention from the semantics doc.
+  verified: true
+
+- id: q305
+  question: What is the average freight cost per order?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT avg(order_freight) AS avg_freight_per_order
+    FROM (
+      SELECT o.order_id, sum(oi.freight_value) AS order_freight
+      FROM orders o
+      JOIN order_items oi ON oi.order_id = o.order_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      GROUP BY 1
+    )
+  tags: [average, freight, cte]
+  rules: [status_exclusion]
+  traps: [aov_item_vs_order]
+  notes: >
+    Same shape as q103. Averaging freight_value directly gives average freight
+    per item, which is lower and answers a different question.
+  verified: true
+
+- id: q307
+  question: How many distinct products have been sold at least once?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT count(DISTINCT oi.product_id) AS products_sold
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [count, products]
+  rules: [status_exclusion]
+  traps: []
+  notes: Lower than the 32,951 products in the catalogue.
+  verified: true
+
+- id: q308
+  question: How many sellers have never completed a sale?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT count(*) AS sellers_without_sales
+    FROM sellers s
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM order_items oi
+      JOIN orders o ON o.order_id = oi.order_id
+      WHERE oi.seller_id = s.seller_id
+        AND o.order_status NOT IN ('canceled', 'unavailable')
+    )
+  tags: [count, sellers, anti_join]
+  rules: [status_exclusion]
+  traps: []
+  notes: >
+    An anti-join. A model reaching for a LEFT JOIN with an IS NULL filter is
+    equally correct; one using an inner join cannot answer this at all.
+  verified: true
+
+- id: q309
+  question: What is the average number of photos per product?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT avg(product_photos_qty) AS avg_photos
+    FROM products
+  tags: [average, products]
+  rules: []
+  traps: []
+  notes: Nulls are skipped by avg(), which is the intended behaviour here.
+  verified: true
+
+- id: q310
+  question: What is the average product weight in grams?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT avg(product_weight_g) AS avg_weight_g
+    FROM products
+  tags: [average, products]
+  rules: []
+  traps: []
+  notes: Floor question with an unambiguous column name - the control for q311.
+  verified: true
+
+- id: q311
+  question: What is the average physical length of a product in centimetres?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT avg(product_length_cm) AS avg_length_cm
+    FROM products
+  tags: [average, products]
+  rules: []
+  traps: [column_confusion]
+  notes: >
+    Expect 30.82 cm. The trap is product_name_lenght - misspelled in the
+    source data, and it measures the character count of the product name, not
+    a physical dimension. A model matching on the word "length" alone may pick
+    it. An earlier version of this note claimed the two differ by an order of
+    magnitude; that was asserted rather than measured and has been removed.
+    Record the actual figure for product_name_lenght here once run - if it
+    sits near 30-50, the wrong answer reads as a plausible product dimension
+    and this is a stronger trap than first described.
+  verified: true
+
+- id: q312
+  question: Which payment method has the highest average payment value?
+  kind: answerable
+  tier: 2
+  ordered: true
+  sql: |
+    SELECT payment_type, avg(payment_value) AS avg_value
+    FROM order_payments
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [payments, average, ranking]
+  rules: []
+  traps: []
+  notes: Aggregated from payments alone, without touching order_items.
+  verified: true
+
+- id: q313
+  question: How many orders were paid in more than one instalment?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT count(DISTINCT order_id) AS orders_with_instalments
+    FROM order_payments
+    WHERE payment_installments > 1
+  tags: [count, payments]
+  rules: []
+  traps: []
+  notes: >
+    DISTINCT matters - an order can carry several payment rows. Two rows
+    record zero instalments and are excluded by the filter.
+  verified: true
+
+- id: q314
+  question: How many orders were placed by customers in Rio de Janeiro state?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT count(*) AS orders
+    FROM orders o
+    JOIN customers c ON c.customer_id = o.customer_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND c.customer_state = 'RJ'
+  tags: [count, geography]
+  rules: [status_exclusion]
+  traps: [geolocation_fanout]
+  notes: State code is RJ. customer_state is already on customers.
+  verified: true
+
+- id: q315
+  question: What is the total freight charged across all orders?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT sum(oi.freight_value) AS total_freight
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [sum, freight]
+  rules: [status_exclusion]
+  traps: []
+  notes: >
+    Freight is charged per item line, not per order. This is a total, not an
+    average, so no order-level aggregation is needed.
+  verified: true
+
+- id: q316
+  question: How many reviews included a written comment?
+  kind: answerable
+  tier: 1
+  ordered: false
+  sql: |
+    SELECT count(*) AS reviews_with_comment
+    FROM order_reviews
+    WHERE review_comment_message IS NOT NULL
+  tags: [count, reviews, nulls]
+  rules: []
+  traps: []
+  notes: Most reviews are a score with no text.
+  verified: true
+
+- id: q317
+  question: Which state has the most sellers?
+  kind: answerable
+  tier: 2
+  ordered: true
+  sql: |
+    SELECT seller_state, count(*) AS sellers
+    FROM sellers
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 1
+  tags: [group_by, sellers, geography, ranking]
+  rules: []
+  traps: []
+  notes: Expect SP. The seller base is far more concentrated than the customer base.
+  verified: true
+
+- id: q318
+  question: What is the total value of all payments received?
+  kind: answerable
+  tier: 2
+  ordered: false
+  sql: |
+    SELECT sum(payment_value) AS total_paid
+    FROM order_payments
+  tags: [sum, payments]
+  rules: []
+  traps: [payment_fanout]
+  notes: >
+    Expect 16,008,872.12. This is deliberately NOT revenue - it includes
+    freight, and it includes payments on cancelled orders. Joining order_items
+    to answer it inflates the figure. The semantics doc records that revenue
+    and total paid differ by roughly 18% and that this is correct.
+  verified: true
+
+- id: q319
+  question: How much revenue came from customers in the city of Sao Paulo?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN customers c ON c.customer_id = o.customer_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND c.customer_city = 'sao paulo'
+  tags: [revenue, geography]
+  rules: [status_exclusion, freight_definition]
+  traps: [geolocation_fanout]
+  notes: >
+    City, not state - the counterpart to q108. customer_city is lowercase and
+    unaccented in this data. The geolocation table also carries a city column
+    and joining to it multiplies the answer by roughly 150.
+  verified: true
+
+- id: q320
+  question: What is the average item price in the health and beauty category?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT avg(oi.price) AS avg_item_price
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN products p ON p.product_id = oi.product_id
+    JOIN product_category_translation t
+      ON t.product_category_name = p.product_category_name
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND t.product_category_name_english = 'health_beauty'
+  tags: [average, products, category]
+  rules: [status_exclusion]
+  traps: [category_inner_join]
+  notes: >
+    An inner join to the translation table is correct here, because the
+    question names a category that must be translated. This is the case where
+    the LEFT join rule does NOT apply - included so the rule is not learned as
+    "always use LEFT".
+  verified: true

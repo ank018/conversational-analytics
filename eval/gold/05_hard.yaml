@@ -1,0 +1,220 @@
+# Gold batch 05 - hard
+#
+# All tier 4. Multi-step: CTEs, window functions, self-referencing
+# aggregations, or a definitional decision that changes the answer.
+#
+# These are where the accuracy curve should bend. If a system scores well on
+# batch 01 and poorly here, that is a useful and reportable shape - it says
+# the failure is in query construction rather than schema comprehension.
+
+- id: q401
+  question: Compare revenue for January to August 2017 against the same period in 2018.
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    SELECT year(o.order_purchase_timestamp) AS year,
+           sum(oi.price) AS revenue
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND year(o.order_purchase_timestamp) IN (2017, 2018)
+      AND month(o.order_purchase_timestamp) BETWEEN 1 AND 8
+    GROUP BY 1
+    ORDER BY 1
+  tags: [revenue, time_series, comparison]
+  rules: [partial_years, status_exclusion]
+  traps: []
+  notes: >
+    The like-for-like counterpart to q112. q112 compares twelve months against
+    eight and invites a wrong conclusion; this one restricts both years to the
+    window the data actually covers. Keep both: q112 tests whether the system
+    volunteers the caveat, this one tests whether it can build the correct
+    comparison when asked directly.
+  verified: true
+
+- id: q402
+  question: What share of revenue comes from customers who ordered more than once?
+  kind: answerable
+  tier: 4
+  ordered: false
+  sql: |
+    WITH repeat_customers AS (
+      SELECT c.customer_unique_id
+      FROM customers c
+      JOIN orders o ON o.customer_id = c.customer_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      GROUP BY 1
+      HAVING count(DISTINCT o.order_id) > 1
+    )
+    SELECT sum(CASE WHEN rc.customer_unique_id IS NOT NULL THEN oi.price ELSE 0 END)
+           / sum(oi.price) AS repeat_revenue_share
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN customers c ON c.customer_id = o.customer_id
+    LEFT JOIN repeat_customers rc
+      ON rc.customer_unique_id = c.customer_unique_id
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+  tags: [revenue, customers, retention, cte]
+  rules: [customer_id_vs_unique, status_exclusion]
+  traps: []
+  notes: >
+    Expect a small share - only 3.04% of customers order twice. Building this
+    on customer_id instead of customer_unique_id returns zero, because
+    customer_id is unique per order and no customer can ever repeat.
+  verified: true
+
+- id: q403
+  question: Which product category with at least 100 reviews has the worst average review score?
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    WITH order_category AS (
+      SELECT DISTINCT o.order_id,
+             coalesce(t.product_category_name_english, 'unknown') AS category
+      FROM orders o
+      JOIN order_items oi ON oi.order_id = o.order_id
+      JOIN products p ON p.product_id = oi.product_id
+      LEFT JOIN product_category_translation t
+        ON t.product_category_name = p.product_category_name
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    )
+    SELECT oc.category,
+           avg(r.review_score) AS avg_score,
+           count(*) AS reviews
+    FROM order_category oc
+    JOIN order_reviews r ON r.order_id = oc.order_id
+    GROUP BY 1
+    HAVING count(*) >= 100
+    ORDER BY 2 ASC
+    LIMIT 1
+  tags: [reviews, products, category, cte, ranking]
+  rules: [status_exclusion]
+  traps: [review_fanout, category_inner_join]
+  notes: >
+    Expect office_furniture at 3.62 over 1,267 reviews. The DISTINCT in the
+    CTE is the substance: joining reviews straight through order_items counts
+    a review once per item line, so multi-item orders weigh more heavily and
+    the ranking shifts.
+
+    The 100-review floor was originally hidden in the SQL while the question
+    said only "worst average review score". A model cannot infer a threshold
+    it was never told about, so it would have been marked wrong for a
+    defensible answer. The threshold now appears in the question, as it does
+    in q405. Re-verify: the SQL is unchanged, but the question is not.
+  verified: true
+
+- id: q404
+  question: What was the month-on-month revenue growth rate through 2017?
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    WITH monthly AS (
+      SELECT strftime(o.order_purchase_timestamp, '%Y-%m') AS month,
+             sum(oi.price) AS revenue
+      FROM order_items oi
+      JOIN orders o ON o.order_id = oi.order_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+        AND o.order_purchase_timestamp >= DATE '2017-01-01'
+        AND o.order_purchase_timestamp <  DATE '2018-01-01'
+      GROUP BY 1
+    )
+    SELECT month,
+           revenue,
+           revenue / lag(revenue) OVER (ORDER BY month) - 1 AS growth
+    FROM monthly
+    ORDER BY month
+  tags: [revenue, time_series, window_function]
+  rules: [status_exclusion]
+  traps: []
+  notes: >
+    Twelve rows; growth is null in January because there is no prior month
+    inside the window. That null is correct and must not be filled with zero.
+  verified: true
+
+- id: q405
+  question: Which five sellers with at least fifty reviews have the lowest average review score?
+  kind: answerable
+  tier: 4
+  ordered: true
+  sql: |
+    WITH seller_orders AS (
+      SELECT DISTINCT oi.seller_id, o.order_id
+      FROM order_items oi
+      JOIN orders o ON o.order_id = oi.order_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    )
+    SELECT so.seller_id,
+           avg(r.review_score) AS avg_score,
+           count(*) AS reviews
+    FROM seller_orders so
+    JOIN order_reviews r ON r.order_id = so.order_id
+    GROUP BY 1
+    HAVING count(*) >= 50
+    ORDER BY 2 ASC
+    LIMIT 5
+  tags: [reviews, sellers, cte, ranking]
+  rules: [status_exclusion]
+  traps: [review_fanout]
+  notes: >
+    Same DISTINCT problem as q403 - a seller shipping two items on one order
+    would otherwise have that order's review counted twice.
+  verified: true
+
+- id: q406
+  question: What share of total revenue do the ten largest sellers account for?
+  kind: answerable
+  tier: 4
+  ordered: false
+  sql: |
+    WITH seller_revenue AS (
+      SELECT oi.seller_id, sum(oi.price) AS revenue
+      FROM order_items oi
+      JOIN orders o ON o.order_id = oi.order_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      GROUP BY 1
+    ),
+    ranked AS (
+      SELECT revenue, row_number() OVER (ORDER BY revenue DESC) AS rank
+      FROM seller_revenue
+    )
+    SELECT sum(CASE WHEN rank <= 10 THEN revenue ELSE 0 END) / sum(revenue)
+             AS top_ten_share
+    FROM ranked
+  tags: [revenue, sellers, window_function, concentration]
+  rules: [status_exclusion]
+  traps: []
+  notes: >
+    A concentration measure. Requires ranking and then aggregating over the
+    ranking, which is two passes - a common place for generated SQL to fail.
+  verified: true
+
+- id: q407
+  question: How many customers placed their first order in 2018?
+  kind: answerable
+  tier: 4
+  ordered: false
+  sql: |
+    WITH first_order AS (
+      SELECT c.customer_unique_id,
+             min(o.order_purchase_timestamp) AS first_purchase
+      FROM customers c
+      JOIN orders o ON o.customer_id = c.customer_id
+      WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      GROUP BY 1
+    )
+    SELECT count(*) AS new_customers_2018
+    FROM first_order
+    WHERE first_purchase >= DATE '2018-01-01'
+      AND first_purchase <  DATE '2019-01-01'
+  tags: [count, customers, cohort, cte]
+  rules: [customer_id_vs_unique, status_exclusion]
+  traps: []
+  notes: >
+    Requires computing each customer's first order before filtering. Filtering
+    orders to 2018 and then counting distinct customers is a different and
+    wrong answer - it counts everyone who ordered in 2018, including those who
+    started in 2017.
+  verified: true
