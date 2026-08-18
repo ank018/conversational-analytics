@@ -1,2 +1,2 @@
 -r requirements.txt
-kaggle
+kaggle==2.2.4
