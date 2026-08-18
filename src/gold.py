@@ -49,6 +49,7 @@ class GoldQuestion:
     tags: list[str] = field(default_factory=list)
     rules: list[str] = field(default_factory=list)
     traps: list[str] = field(default_factory=list)
+    answer_columns: int | None = None
     notes: str = ""
     verified: bool = False
 
@@ -76,6 +77,10 @@ def _validate(q: dict, path: Path) -> list[str]:
             problems.append(
                 f"{qid}: {kind} question must not carry sql - it has no single "
                 f"correct answer")
+
+    ac = q.get("answer_columns")
+    if ac is not None and (not isinstance(ac, int) or ac < 1):
+        problems.append(f"{qid}: answer_columns must be a positive integer")
 
     for listy in ("tags", "rules", "traps"):
         if not isinstance(q.get(listy, []), list):
@@ -120,6 +125,7 @@ def load_gold(gold_dir: Path = GOLD_DIR,
                 tags=item.get("tags", []) or [],
                 rules=item.get("rules", []) or [],
                 traps=item.get("traps", []) or [],
+                answer_columns=item.get("answer_columns"),
                 notes=item.get("notes", "") or "",
                 verified=bool(item.get("verified", False)),
             ))

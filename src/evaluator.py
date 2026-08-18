@@ -48,6 +48,7 @@ Self-test:
 from __future__ import annotations
 
 import datetime as dt
+import re
 import sys
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -62,11 +63,16 @@ REL_TOL = 1e-6
 MAX_CANDIDATE_COLS_FOR_PERMUTATION = 8
 
 SILENT = {"wrong_value", "wrong_shape", "empty"}
-# Every way the sandbox can refuse or fail a query. Derived from sandbox
-# rather than listed here, so a new error kind cannot silently fall outside
-# both buckets - an earlier version listed only {"error", "blocked"} and
-# syntax errors went uncounted, breaking the invariant below.
-VISIBLE = set(sandbox.ERROR_KINDS) | {"error"}
+# Every way the sandbox can refuse or fail a query, plus abstention. Derived
+# from sandbox rather than listed here, so a new error kind cannot silently
+# fall outside both buckets - an earlier version listed only
+# {"error", "blocked"} and syntax errors went uncounted.
+#
+# "abstained" means the model declined to answer. On an answerable question
+# that is a failure, but a VISIBLE one: the user knows they got no answer.
+# On an ambiguous or unsupported question it is the correct behaviour, and is
+# scored separately rather than through result comparison.
+VISIBLE = set(sandbox.ERROR_KINDS) | {"error", "abstained"}
 
 # Invariant: every verdict is correct, silent or visible, and the three rates
 # sum to 1. Asserted in the self-test.
@@ -112,10 +118,37 @@ def _norm(value):
     if isinstance(value, (int, float, Decimal)):
         return float(value)
     if isinstance(value, (dt.datetime, dt.date)):
-        return value.isoformat()
+        return value.isoformat().casefold()
     if isinstance(value, str):
         return value.strip().casefold()
     return str(value).strip().casefold()
+
+
+_MONTH_LABEL = re.compile(r"^\d{4}-\d{2}$")
+# Case-insensitive: isoformat() emits a capital T, while _norm casefolds
+# ordinary strings but left date-derived ones alone. That asymmetry made an
+# earlier lowercase-only pattern silently never match.
+_MONTH_START = re.compile(r"^(\d{4}-\d{2})-01(?:[t ]00:00:00(?:\.0+)?)?$",
+                          re.IGNORECASE)
+
+
+def _same_month(gold, cand) -> bool:
+    """True when gold is a month label and cand is that month's first instant.
+
+    Gold renders months with strftime as '2018-01'; a model using
+    date_trunc('month', ...) renders '2018-01-01T00:00:00'. Same month, same
+    grouping, same counts - marked wrong on formatting alone.
+
+    Deliberately one-directional and narrow. Gold must be the bare month
+    label, so a day-level gold like q512's '2017-11-24' can never be
+    satisfied by a candidate that only got the month right.
+    """
+    if not (isinstance(gold, str) and isinstance(cand, str)):
+        return False
+    if not _MONTH_LABEL.match(gold):
+        return False
+    m = _MONTH_START.match(cand)
+    return bool(m) and m.group(1) == gold
 
 
 def _equal(a, b, tol: float = REL_TOL) -> bool:
@@ -129,7 +162,9 @@ def _equal(a, b, tol: float = REL_TOL) -> bool:
         return abs(a - b) <= tol * max(abs(a), abs(b), 1e-12)
     if isinstance(a, float) != isinstance(b, float):
         return False
-    return a == b
+    if a == b:
+        return True
+    return _same_month(a, b)
 
 
 def _sort_key(row: tuple):
@@ -141,7 +176,11 @@ def _sort_key(row: tuple):
         elif isinstance(cell, float):
             key.append((1, cell, ""))
         else:
-            key.append((2, 0.0, str(cell)))
+            text = str(cell)
+            m = _MONTH_START.match(text)
+            if m:                      # sort '2018-01-01T00:00:00' as '2018-01'
+                text = m.group(1)
+            key.append((2, 0.0, text))
     return tuple(key)
 
 
@@ -162,24 +201,36 @@ def _rows_match(gold_rows: list[tuple], cand_rows: list[tuple],
 def compare(gold_result: sandbox.QueryResult,
             cand_result: sandbox.QueryResult,
             ordered: bool,
-            tol: float = REL_TOL) -> tuple[str, str, tuple[int, ...] | None]:
-    """Return (kind, detail, column_map)."""
+            tol: float = REL_TOL,
+            answer_columns: int | None = None
+            ) -> tuple[str, str, tuple[int, ...] | None]:
+    """Return (kind, detail, column_map).
+
+    `answer_columns` is how many of gold's leading columns actually answer the
+    question. Gold for "which city has the most sellers" returns the city and
+    a supporting count; the city alone is a complete - arguably better -
+    answer, and rejecting it would understate accuracy. Where it is None, all
+    of gold's columns are required.
+    """
     if not cand_result.rows:
         return "empty", "candidate returned no rows", None
 
     n_gold_cols = len(gold_result.columns)
+    if answer_columns is not None:
+        n_gold_cols = min(answer_columns, n_gold_cols)
     n_cand_cols = len(cand_result.columns)
 
     if n_cand_cols < n_gold_cols:
         return ("wrong_shape",
-                f"{n_cand_cols} columns, gold has {n_gold_cols}", None)
+                f"{n_cand_cols} columns, answer needs {n_gold_cols}", None)
 
     if len(cand_result.rows) != len(gold_result.rows):
         return ("wrong_shape",
                 f"{len(cand_result.rows)} rows, gold has "
                 f"{len(gold_result.rows)}", None)
 
-    gold_rows = [tuple(_norm(v) for v in r) for r in gold_result.rows]
+    gold_rows = [tuple(_norm(v) for v in r[:n_gold_cols])
+                 for r in gold_result.rows]
     cand_rows = [tuple(_norm(v) for v in r) for r in cand_result.rows]
 
     # Try column assignments. Identity first - it is nearly always right, and
@@ -249,7 +300,8 @@ def evaluate(question: goldmod.GoldQuestion,
                        candidate_sql=candidate_sql)
 
     gold_res = cache.get(question)
-    kind, detail, mapping = compare(gold_res, cand, question.ordered, tol)
+    kind, detail, mapping = compare(gold_res, cand, question.ordered, tol,
+                                    question.answer_columns)
     return Verdict(question.id, kind, detail, mapping,
                    cand.elapsed_ms, candidate_sql)
 
@@ -321,6 +373,20 @@ EQUIVALENT: list[tuple[str, str, str]] = [
         FROM order_items oi JOIN orders o ON o.order_id = oi.order_id
         WHERE o.order_status NOT IN ('canceled', 'unavailable')
         GROUP BY 1 ORDER BY 2 DESC LIMIT 1"""),
+    ("q006", "answer column only, no supporting count",
+     """SELECT seller_city FROM sellers
+        GROUP BY 1 ORDER BY count(*) DESC LIMIT 1"""),
+    ("q010", "answer column only", """
+        SELECT c.customer_state FROM customers c
+        JOIN orders o ON o.customer_id = c.customer_id
+        WHERE o.order_status NOT IN ('canceled', 'unavailable')
+        GROUP BY 1 ORDER BY count(DISTINCT c.customer_unique_id) DESC LIMIT 1"""),
+    ("q601", "date_trunc month instead of strftime", """
+        SELECT date_trunc('month', first_contact_date) AS month, count(*)
+        FROM marketing_qualified_leads
+        WHERE first_contact_date >= DATE '2018-01-01'
+          AND first_contact_date <  DATE '2019-01-01'
+        GROUP BY 1 ORDER BY 1"""),
     ("q005", "columns in the other order", """
         SELECT count(*) AS payments, payment_type
         FROM order_payments GROUP BY 2 ORDER BY 1 DESC"""),
@@ -357,6 +423,13 @@ WRONG: list[tuple[str, str, str]] = [
     ("q512", "grouped by raw timestamp", """
         SELECT order_purchase_timestamp, count(*) FROM orders
         WHERE order_status NOT IN ('canceled', 'unavailable')
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 1"""),
+    ("q006", "support column only, answer column missing",
+     """SELECT count(*) FROM sellers GROUP BY seller_city
+        ORDER BY count(*) DESC LIMIT 1"""),
+    ("q512", "month where a specific day was asked for", """
+        SELECT strftime(order_purchase_timestamp, '%Y-%m') AS day, count(*)
+        FROM orders WHERE order_status NOT IN ('canceled', 'unavailable')
         GROUP BY 1 ORDER BY 2 DESC LIMIT 1"""),
     ("q311", "name length instead of physical length",
      "SELECT avg(product_name_lenght) FROM products"),
