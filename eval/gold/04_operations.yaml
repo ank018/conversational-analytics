@@ -199,13 +199,15 @@
   traps: [column_confusion]
   notes: >
     Expect 30.82 cm. The trap is product_name_lenght - misspelled in the
-    source data, and it measures the character count of the product name, not
-    a physical dimension. A model matching on the word "length" alone may pick
-    it. An earlier version of this note claimed the two differ by an order of
-    magnitude; that was asserted rather than measured and has been removed.
-    Record the actual figure for product_name_lenght here once run - if it
-    sits near 30-50, the wrong answer reads as a plausible product dimension
-    and this is a stronger trap than first described.
+    source data, and it holds the character count of the product name, not a
+    physical dimension.
+
+    Measured: product_name_lenght averages 48.48. An earlier version of this
+    note claimed the two differ by an order of magnitude, which was asserted
+    rather than measured and was wrong - the ratio is 1.6. That makes the trap
+    considerably better than first described: a model reaching for the wrong
+    column returns "48.5 cm", which is an entirely plausible parcel dimension.
+    Nothing about the wrong answer looks wrong.
   verified: true
 
 - id: q312
