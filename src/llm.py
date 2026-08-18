@@ -100,7 +100,7 @@ class Cache:
 
     @staticmethod
     def key(model: str, temperature: float, messages: list[dict],
-            max_tokens: int) -> str:
+            max_tokens: int, cache_bust: int = 0) -> str:
         """Every parameter that can change the response must be in the key.
 
         max_tokens was originally omitted. Raising it therefore replayed the
@@ -108,7 +108,7 @@ class Cache:
         experiment that silently measured nothing at all.
         """
         blob = json.dumps([Cache.SCHEMA_VERSION, model, temperature,
-                           max_tokens, messages], sort_keys=True)
+                           max_tokens, cache_bust, messages], sort_keys=True)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     def get(self, key: str) -> dict | None:
@@ -146,7 +146,8 @@ def complete(messages: list[dict],
              cache: Cache | None = None,
              provider: str | None = None,
              max_price_per_m: float | None = None,
-             pace_s: float = 0.0) -> LLMResponse:
+             pace_s: float = 0.0,
+             cache_bust: int = 0) -> LLMResponse:
     """One chat completion. Returns an error rather than raising.
 
     `provider` pins routing to a single upstream. Leave it unset only for
@@ -156,8 +157,12 @@ def complete(messages: list[dict],
     """
     own_cache = cache is None
     cache = cache or Cache()
+    # cache_bust changes the cache key without changing the request, so
+    # repeat runs of an identical prompt hit the API instead of replaying a
+    # stored answer. That is the only way to measure how much a result varies
+    # for reasons that have nothing to do with the prompt.
     key = Cache.key(f"{model}@{provider or 'any'}", temperature, messages,
-                    max_tokens)
+                    max_tokens, cache_bust)
 
     hit = cache.get(key)
     if hit is not None:
