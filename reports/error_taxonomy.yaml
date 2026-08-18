@@ -1,0 +1,885 @@
+# Stage 7 - error taxonomy
+# Built from baseline_deepseek_20260818T114153Z.json
+# Model: deepseek/deepseek-v4-pro-0813
+#
+# Fill in `cause:` for every entry. `suggested_cause` is a pattern
+# match on the SQL, not a judgement - read the two queries before
+# accepting it.
+#
+# Valid causes:
+#   missing_status_filter      Did not exclude cancelled/unavailable orders
+#   wrong_revenue_metric       Used payment_value or included freight as revenue
+#   wrong_customer_key         Counted customer_id instead of customer_unique_id
+#   wrong_aggregation_level    Averaged item rows where the order was the unit
+#   wrong_date_column          Filtered on the wrong one of the five date columns
+#   wrong_join_type            Inner join where LEFT was needed, or the reverse
+#   fanout                     A join multiplied rows and inflated an aggregate
+#   missing_distinct           Counted item rows where the question asked for orders
+#   wrong_column               Picked a similarly named column measuring something else
+#   wrong_granularity          Grouped by year where months were asked for, or similar
+#   missing_threshold          Ignored a minimum stated in the question
+#   shape_mismatch             Right idea, wrong number of rows or columns
+#   sql_error                  Query did not parse or bind
+#   empty_or_truncated         Model returned nothing, or ran out of tokens
+#   defensible_disagreement    Model's answer is reasonable; gold encodes our choice
+#   gold_wrong                 Gold answer is incorrect and must be fixed
+#   unclear                    Cause not obvious from the SQL
+#
+# Use defensible_disagreement when the model's answer is reasonable
+# and gold encodes a choice. Use gold_wrong when gold is incorrect -
+# those questions must then be fixed in eval/gold/.
+
+- id: q001
+  tier: 1
+  verdict: wrong_value
+  question: How many orders have been placed in total?
+  detail: 'row 0 col 0: gold 98207.0 vs 99441.0'
+  rules:
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: 'SELECT count(*) AS orders
+
+    FROM orders
+
+    WHERE order_status NOT IN (''canceled'', ''unavailable'')'
+  model_sql: SELECT COUNT(*) FROM orders;
+
+- id: q009
+  tier: 2
+  verdict: wrong_value
+  question: How many orders were placed in each month of 2017?
+  detail: 'row 0 col 1: gold 787.0 vs 800.0'
+  rules:
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT strftime(order_purchase_timestamp, '%Y-%m') AS month,\n       count(*)\
+    \ AS orders\nFROM orders\nWHERE order_status NOT IN ('canceled', 'unavailable')\n  AND\
+    \ order_purchase_timestamp >= DATE '2017-01-01'\n  AND order_purchase_timestamp <  DATE\
+    \ '2018-01-01'\nGROUP BY 1\nORDER BY 1"
+  model_sql: 'SELECT DATE_TRUNC(''month'', order_purchase_timestamp) AS month, COUNT(*) AS
+    order_count
+
+    FROM orders
+
+    WHERE EXTRACT(YEAR FROM order_purchase_timestamp) = 2017
+
+    GROUP BY 1
+
+    ORDER BY 1;'
+
+- id: q101
+  tier: 2
+  verdict: wrong_value
+  question: What was total revenue?
+  detail: 'row 0 col 0: gold 13494400.74001409 vs 16008872.119998764'
+  rules:
+  - status_exclusion
+  - freight_definition
+  traps:
+  - payment_fanout
+  suggested_cause: missing_status_filter
+  cause: wrong_revenue_metric
+  notes: ''
+  gold_sql: 'SELECT sum(oi.price) AS revenue
+
+    FROM order_items oi
+
+    JOIN orders o ON o.order_id = oi.order_id
+
+    WHERE o.order_status NOT IN (''canceled'', ''unavailable'')'
+  model_sql: SELECT SUM(payment_value) AS total_revenue FROM order_payments;
+
+- id: q102
+  tier: 3
+  verdict: wrong_value
+  question: What was total revenue in 2017?
+  detail: 'row 0 col 0: gold 6108492.270002876 vs 7249746.729999683'
+  rules:
+  - status_exclusion
+  - freight_definition
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: wrong_revenue_metric
+  notes: ''
+  gold_sql: "SELECT sum(oi.price) AS revenue\nFROM order_items oi\nJOIN orders o ON o.order_id\
+    \ = oi.order_id\nWHERE o.order_status NOT IN ('canceled', 'unavailable')\n  AND o.order_purchase_timestamp\
+    \ >= DATE '2017-01-01'\n  AND o.order_purchase_timestamp <  DATE '2018-01-01'"
+  model_sql: SELECT SUM(op.payment_value) AS total_revenue FROM orders o JOIN order_payments
+    op ON o.order_id = op.order_id WHERE EXTRACT(YEAR FROM o.order_purchase_timestamp) = 2017;
+
+- id: q103
+  tier: 3
+  verdict: wrong_value
+  question: What is the average order value?
+  detail: 'row 0 col 0: gold 137.41892218861338 vs 160.99026669348348'
+  rules:
+  - status_exclusion
+  traps:
+  - aov_item_vs_order
+  suggested_cause: missing_status_filter
+  cause: wrong_revenue_metric
+  notes: ''
+  gold_sql: "SELECT avg(order_total) AS average_order_value\nFROM (\n  SELECT o.order_id,\
+    \ sum(oi.price) AS order_total\n  FROM orders o\n  JOIN order_items oi ON oi.order_id\
+    \ = o.order_id\n  WHERE o.order_status NOT IN ('canceled', 'unavailable')\n  GROUP BY\
+    \ 1\n)"
+  model_sql: SELECT AVG(order_total) FROM (SELECT order_id, SUM(payment_value) AS order_total
+    FROM order_payments GROUP BY order_id) AS sub;
+
+- id: q104
+  tier: 3
+  verdict: wrong_value
+  question: How many distinct customers have placed an order?
+  detail: 'row 0 col 0: gold 94990.0 vs 99441.0'
+  rules:
+  - customer_id_vs_unique
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: wrong_customer_key
+  notes: ''
+  gold_sql: 'SELECT count(DISTINCT c.customer_unique_id) AS customers
+
+    FROM customers c
+
+    JOIN orders o ON o.customer_id = c.customer_id
+
+    WHERE o.order_status NOT IN (''canceled'', ''unavailable'')'
+  model_sql: SELECT COUNT(DISTINCT customer_id) FROM orders;
+
+- id: q105
+  tier: 3
+  verdict: wrong_value
+  question: How many customers have ordered more than once?
+  detail: 'row 0 col 0: gold 2888.0 vs 0.0'
+  rules:
+  - customer_id_vs_unique
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: wrong_customer_key
+  notes: ''
+  gold_sql: "SELECT count(*) AS repeat_customers\nFROM (\n  SELECT c.customer_unique_id\n\
+    \  FROM customers c\n  JOIN orders o ON o.customer_id = c.customer_id\n  WHERE o.order_status\
+    \ NOT IN ('canceled', 'unavailable')\n  GROUP BY 1\n  HAVING count(DISTINCT o.order_id)\
+    \ > 1\n)"
+  model_sql: "SELECT COUNT(*) FROM (\n  SELECT customer_id\n  FROM orders\n  GROUP BY customer_id\n\
+    \  HAVING COUNT(order_id) > 1\n) AS repeat_customers;"
+
+- id: q106
+  tier: 4
+  verdict: wrong_value
+  question: Which product category generated the most revenue?
+  detail: 'row 0 col 0: gold ''health_beauty'' vs ''beleza_saude'''
+  rules:
+  - status_exclusion
+  - freight_definition
+  traps:
+  - category_inner_join
+  suggested_cause: missing_status_filter
+  cause: unclear
+  notes: ''
+  gold_sql: "SELECT coalesce(t.product_category_name_english, 'unknown') AS category,\n  \
+    \     sum(oi.price) AS revenue\nFROM order_items oi\nJOIN orders o ON o.order_id = oi.order_id\n\
+    JOIN products p ON p.product_id = oi.product_id\nLEFT JOIN product_category_translation\
+    \ t\n  ON t.product_category_name = p.product_category_name\nWHERE o.order_status NOT\
+    \ IN ('canceled', 'unavailable')\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 1"
+  model_sql: 'SELECT p.product_category_name, SUM(oi.price) AS total_revenue
+
+    FROM order_items oi
+
+    JOIN products p ON oi.product_id = p.product_id
+
+    GROUP BY p.product_category_name
+
+    ORDER BY total_revenue DESC
+
+    LIMIT 1;'
+
+- id: q108
+  tier: 3
+  verdict: wrong_value
+  question: How much revenue came from customers in Sao Paulo state?
+  detail: 'row 0 col 0: gold 5163867.220001481 vs 5998226.9599999245'
+  rules:
+  - status_exclusion
+  traps:
+  - geolocation_fanout
+  suggested_cause: missing_status_filter
+  cause: wrong_revenue_metric
+  notes: ''
+  gold_sql: "SELECT sum(oi.price) AS revenue\nFROM order_items oi\nJOIN orders o ON o.order_id\
+    \ = oi.order_id\nJOIN customers c ON c.customer_id = o.customer_id\nWHERE o.order_status\
+    \ NOT IN ('canceled', 'unavailable')\n  AND c.customer_state = 'SP'"
+  model_sql: 'SELECT SUM(op.payment_value) AS total_revenue
+
+    FROM order_payments op
+
+    JOIN orders o ON op.order_id = o.order_id
+
+    JOIN customers c ON o.customer_id = c.customer_id
+
+    WHERE c.customer_state = ''SP'';'
+
+- id: q110
+  tier: 3
+  verdict: wrong_value
+  question: What is the average number of items per order?
+  detail: 'row 0 col 0: gold 1.1415696697522377 vs 1.1417306873695092'
+  rules:
+  - status_exclusion
+  traps:
+  - itemless_orders
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: 'SELECT count(*) * 1.0 / count(DISTINCT oi.order_id) AS items_per_order
+
+    FROM order_items oi
+
+    JOIN orders o ON o.order_id = oi.order_id
+
+    WHERE o.order_status NOT IN (''canceled'', ''unavailable'')'
+  model_sql: SELECT AVG(item_count) FROM (SELECT order_id, COUNT(*) AS item_count FROM order_items
+    GROUP BY order_id) AS order_counts;
+
+- id: q112
+  tier: 4
+  verdict: wrong_value
+  question: Compare total revenue in 2017 against 2018.
+  detail: 'row 0 col 1: gold 6108492.270002876 vs 7249746.729999683'
+  rules:
+  - partial_years
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: wrong_revenue_metric
+  notes: ''
+  gold_sql: "SELECT year(o.order_purchase_timestamp) AS year,\n       sum(oi.price) AS revenue\n\
+    FROM order_items oi\nJOIN orders o ON o.order_id = oi.order_id\nWHERE o.order_status NOT\
+    \ IN ('canceled', 'unavailable')\n  AND year(o.order_purchase_timestamp) IN (2017, 2018)\n\
+    GROUP BY 1\nORDER BY 1"
+  model_sql: 'SELECT EXTRACT(YEAR FROM o.order_purchase_timestamp) AS year, SUM(p.payment_value)
+    AS total_revenue
+
+    FROM orders o
+
+    JOIN order_payments p ON o.order_id = p.order_id
+
+    WHERE EXTRACT(YEAR FROM o.order_purchase_timestamp) IN (2017, 2018)
+
+    GROUP BY year
+
+    ORDER BY year;'
+
+- id: q205
+  tier: null
+  verdict: answered_anyway
+  question: What is our lead conversion rate?
+  detail: ''
+  rules:
+  - funnel_coverage
+  traps: []
+  suggested_cause: unclear
+  cause: defensible_disagreement
+  notes: ''
+  gold_sql: ''
+  model_sql: 'SELECT ROUND(100.0 * COUNT(DISTINCT cd.mql_id) / COUNT(DISTINCT mql.mql_id),
+    2) AS conversion_rate_percent
+
+    FROM marketing_qualified_leads mql
+
+    LEFT JOIN closed_deals cd ON mql.mql_id = cd.mql_id;'
+
+- id: q301
+  tier: 2
+  verdict: wrong_value
+  question: How many orders were delivered later than the estimated date?
+  detail: 'row 0 col 0: gold 7826.0 vs 7827.0'
+  rules:
+  - delivery_definition
+  traps: []
+  suggested_cause: unclear
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT count(*) AS late_orders\nFROM orders\nWHERE order_status = 'delivered'\n\
+    \  AND order_delivered_customer_date IS NOT NULL\n  AND order_delivered_customer_date\
+    \ > order_estimated_delivery_date"
+  model_sql: SELECT COUNT(*) FROM orders WHERE order_delivered_customer_date > order_estimated_delivery_date;
+
+- id: q302
+  tier: 4
+  verdict: wrong_value
+  question: Do orders delivered late receive lower review scores?
+  detail: 'row 0 col 1: gold 2.5664935064935066 vs 2.566549798727438'
+  rules:
+  - delivery_definition
+  traps: []
+  suggested_cause: wrong_aggregation_level
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT CASE WHEN o.order_delivered_customer_date\n                 > o.order_estimated_delivery_date\n\
+    \            THEN 'late' ELSE 'on_time' END AS delivery,\n       avg(r.review_score) AS\
+    \ avg_score,\n       count(*) AS reviews\nFROM orders o\nJOIN order_reviews r ON r.order_id\
+    \ = o.order_id\nWHERE o.order_status = 'delivered'\n  AND o.order_delivered_customer_date\
+    \ IS NOT NULL\nGROUP BY 1\nORDER BY 1"
+  model_sql: "SELECT \n  CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date\
+    \ THEN 'late' ELSE 'on_time' END AS delivery_status,\n  AVG(r.review_score) AS avg_review_score,\n\
+    \  COUNT(*) AS num_reviews\nFROM orders o\nJOIN order_reviews r ON o.order_id = r.order_id\n\
+    WHERE o.order_delivered_customer_date IS NOT NULL\n  AND o.order_estimated_delivery_date\
+    \ IS NOT NULL\nGROUP BY 1;"
+
+- id: q303
+  tier: 3
+  verdict: wrong_shape
+  question: Which state has the longest average delivery time?
+  detail: 1 columns, answer needs 2
+  rules:
+  - delivery_definition
+  traps:
+  - geolocation_fanout
+  suggested_cause: wrong_aggregation_level
+  cause: shape_mismatch
+  notes: ''
+  gold_sql: "SELECT c.customer_state,\n       avg(date_diff('day', o.order_purchase_timestamp,\n\
+    \                     o.order_delivered_customer_date)) AS avg_days\nFROM orders o\nJOIN\
+    \ customers c ON c.customer_id = o.customer_id\nWHERE o.order_status = 'delivered'\n \
+    \ AND o.order_delivered_customer_date IS NOT NULL\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT\
+    \ 1"
+  model_sql: "SELECT c.customer_state\nFROM orders o\nJOIN customers c ON o.customer_id =\
+    \ c.customer_id\nWHERE o.order_delivered_customer_date IS NOT NULL\n  AND o.order_purchase_timestamp\
+    \ IS NOT NULL\nGROUP BY c.customer_state\nORDER BY AVG(o.order_delivered_customer_date\
+    \ - o.order_purchase_timestamp) DESC\nLIMIT 1;"
+
+- id: q305
+  tier: 3
+  verdict: wrong_value
+  question: What is the average freight cost per order?
+  detail: 'row 0 col 0: gold 22.822292385869662 vs 22.823561713254993'
+  rules:
+  - status_exclusion
+  traps:
+  - aov_item_vs_order
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT avg(order_freight) AS avg_freight_per_order\nFROM (\n  SELECT o.order_id,\
+    \ sum(oi.freight_value) AS order_freight\n  FROM orders o\n  JOIN order_items oi ON oi.order_id\
+    \ = o.order_id\n  WHERE o.order_status NOT IN ('canceled', 'unavailable')\n  GROUP BY\
+    \ 1\n)"
+  model_sql: SELECT AVG(freight_total) FROM (SELECT order_id, SUM(freight_value) AS freight_total
+    FROM order_items GROUP BY order_id) AS order_freight;
+
+- id: q307
+  tier: 2
+  verdict: wrong_value
+  question: How many distinct products have been sold at least once?
+  detail: 'row 0 col 0: gold 32729.0 vs 32951.0'
+  rules:
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: 'SELECT count(DISTINCT oi.product_id) AS products_sold
+
+    FROM order_items oi
+
+    JOIN orders o ON o.order_id = oi.order_id
+
+    WHERE o.order_status NOT IN (''canceled'', ''unavailable'')'
+  model_sql: SELECT COUNT(DISTINCT product_id) FROM order_items;
+
+- id: q308
+  tier: 3
+  verdict: wrong_value
+  question: How many sellers have never completed a sale?
+  detail: 'row 0 col 0: gold 42.0 vs 125.0'
+  rules:
+  - status_exclusion
+  traps: []
+  suggested_cause: unclear
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT count(*) AS sellers_without_sales\nFROM sellers s\nWHERE NOT EXISTS (\n\
+    \  SELECT 1\n  FROM order_items oi\n  JOIN orders o ON o.order_id = oi.order_id\n  WHERE\
+    \ oi.seller_id = s.seller_id\n    AND o.order_status NOT IN ('canceled', 'unavailable')\n\
+    )"
+  model_sql: SELECT COUNT(*) FROM sellers s WHERE NOT EXISTS (SELECT 1 FROM order_items oi
+    JOIN orders o ON oi.order_id = o.order_id WHERE oi.seller_id = s.seller_id AND o.order_status
+    = 'delivered');
+
+- id: q314
+  tier: 2
+  verdict: wrong_value
+  question: How many orders were placed by customers in Rio de Janeiro state?
+  detail: 'row 0 col 0: gold 12698.0 vs 12852.0'
+  rules:
+  - status_exclusion
+  traps:
+  - geolocation_fanout
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT count(*) AS orders\nFROM orders o\nJOIN customers c ON c.customer_id =\
+    \ o.customer_id\nWHERE o.order_status NOT IN ('canceled', 'unavailable')\n  AND c.customer_state\
+    \ = 'RJ'"
+  model_sql: SELECT COUNT(*) FROM orders o JOIN customers c ON o.customer_id = c.customer_id
+    WHERE c.customer_state = 'RJ';
+
+- id: q315
+  tier: 2
+  verdict: wrong_value
+  question: What is the total freight charged across all orders?
+  detail: 'row 0 col 0: gold 2241126.290000232 vs 2251909.54000023'
+  rules:
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: 'SELECT sum(oi.freight_value) AS total_freight
+
+    FROM order_items oi
+
+    JOIN orders o ON o.order_id = oi.order_id
+
+    WHERE o.order_status NOT IN (''canceled'', ''unavailable'')'
+  model_sql: SELECT SUM(freight_value) FROM order_items;
+
+- id: q319
+  tier: 3
+  verdict: wrong_value
+  question: How much revenue came from customers in the city of Sao Paulo?
+  detail: 'row 0 col 0: gold 1897019.7999997542 vs 2203373.090000004'
+  rules:
+  - status_exclusion
+  - freight_definition
+  traps:
+  - geolocation_fanout
+  suggested_cause: missing_status_filter
+  cause: wrong_revenue_metric
+  notes: ''
+  gold_sql: "SELECT sum(oi.price) AS revenue\nFROM order_items oi\nJOIN orders o ON o.order_id\
+    \ = oi.order_id\nJOIN customers c ON c.customer_id = o.customer_id\nWHERE o.order_status\
+    \ NOT IN ('canceled', 'unavailable')\n  AND c.customer_city = 'sao paulo'"
+  model_sql: 'SELECT SUM(op.payment_value) AS total_revenue
+
+    FROM customers c
+
+    JOIN orders o ON c.customer_id = o.customer_id
+
+    JOIN order_payments op ON o.order_id = op.order_id
+
+    WHERE LOWER(c.customer_city) = ''sao paulo'';'
+
+- id: q320
+  tier: 3
+  verdict: wrong_value
+  question: What is the average item price in the health and beauty category?
+  detail: 'row 0 col 0: gold 130.3399553664072 vs 130.16353050671853'
+  rules:
+  - status_exclusion
+  traps:
+  - category_inner_join
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT avg(oi.price) AS avg_item_price\nFROM order_items oi\nJOIN orders o ON\
+    \ o.order_id = oi.order_id\nJOIN products p ON p.product_id = oi.product_id\nJOIN product_category_translation\
+    \ t\n  ON t.product_category_name = p.product_category_name\nWHERE o.order_status NOT\
+    \ IN ('canceled', 'unavailable')\n  AND t.product_category_name_english = 'health_beauty'"
+  model_sql: SELECT AVG(oi.price) FROM order_items oi JOIN products p ON oi.product_id = p.product_id
+    JOIN product_category_translation t ON p.product_category_name = t.product_category_name
+    WHERE t.product_category_name_english = 'health_beauty';
+
+- id: q401
+  tier: 4
+  verdict: wrong_shape
+  question: Compare revenue for January to August 2017 against the same period in 2018.
+  detail: 1 rows, gold has 2
+  rules:
+  - partial_years
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: shape_mismatch
+  notes: ''
+  gold_sql: "SELECT year(o.order_purchase_timestamp) AS year,\n       sum(oi.price) AS revenue\n\
+    FROM order_items oi\nJOIN orders o ON o.order_id = oi.order_id\nWHERE o.order_status NOT\
+    \ IN ('canceled', 'unavailable')\n  AND year(o.order_purchase_timestamp) IN (2017, 2018)\n\
+    \  AND month(o.order_purchase_timestamp) BETWEEN 1 AND 8\nGROUP BY 1\nORDER BY 1"
+  model_sql: "SELECT \n  SUM(CASE WHEN o.order_purchase_timestamp >= '2017-01-01' AND o.order_purchase_timestamp\
+    \ < '2017-09-01' THEN p.payment_value ELSE 0 END) AS revenue_2017,\n  SUM(CASE WHEN o.order_purchase_timestamp\
+    \ >= '2018-01-01' AND o.order_purchase_timestamp < '2018-09-01' THEN p.payment_value ELSE\
+    \ 0 END) AS revenue_2018\nFROM orders o\nJOIN order_payments p ON o.order_id = p.order_id\n\
+    WHERE o.order_purchase_timestamp >= '2017-01-01' AND o.order_purchase_timestamp < '2018-09-01';"
+
+- id: q402
+  tier: 4
+  verdict: wrong_value
+  question: What share of revenue comes from customers who ordered more than once?
+  detail: 'row 0 col 0: gold 0.055615394448353075 vs 0.0'
+  rules:
+  - customer_id_vs_unique
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: wrong_revenue_metric
+  notes: ''
+  gold_sql: "WITH repeat_customers AS (\n  SELECT c.customer_unique_id\n  FROM customers c\n\
+    \  JOIN orders o ON o.customer_id = c.customer_id\n  WHERE o.order_status NOT IN ('canceled',\
+    \ 'unavailable')\n  GROUP BY 1\n  HAVING count(DISTINCT o.order_id) > 1\n)\nSELECT sum(CASE\
+    \ WHEN rc.customer_unique_id IS NOT NULL THEN oi.price ELSE 0 END)\n       / sum(oi.price)\
+    \ AS repeat_revenue_share\nFROM order_items oi\nJOIN orders o ON o.order_id = oi.order_id\n\
+    JOIN customers c ON c.customer_id = o.customer_id\nLEFT JOIN repeat_customers rc\n  ON\
+    \ rc.customer_unique_id = c.customer_unique_id\nWHERE o.order_status NOT IN ('canceled',\
+    \ 'unavailable')"
+  model_sql: "WITH order_rev AS (\n  SELECT o.order_id, o.customer_id, COALESCE(SUM(op.payment_value),\
+    \ 0) AS revenue\n  FROM orders o\n  LEFT JOIN order_payments op ON o.order_id = op.order_id\n\
+    \  GROUP BY o.order_id, o.customer_id\n),\ncustomer_stats AS (\n  SELECT customer_id,\
+    \ COUNT(*) AS order_count, SUM(revenue) AS revenue\n  FROM order_rev\n  GROUP BY customer_id\n\
+    )\nSELECT SUM(CASE WHEN order_count > 1 THEN revenue ELSE 0 END) / SUM(revenue) AS share\n\
+    FROM customer_stats;"
+
+- id: q404
+  tier: 4
+  verdict: wrong_value
+  question: What was the month-on-month revenue growth rate through 2017?
+  detail: 'row 0 col 1: gold 120098.26999999952 vs 138488.03999999978'
+  rules:
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: defensible_disagreement
+  notes: ''
+  gold_sql: "WITH monthly AS (\n  SELECT strftime(o.order_purchase_timestamp, '%Y-%m') AS\
+    \ month,\n         sum(oi.price) AS revenue\n  FROM order_items oi\n  JOIN orders o ON\
+    \ o.order_id = oi.order_id\n  WHERE o.order_status NOT IN ('canceled', 'unavailable')\n\
+    \    AND o.order_purchase_timestamp >= DATE '2017-01-01'\n    AND o.order_purchase_timestamp\
+    \ <  DATE '2018-01-01'\n  GROUP BY 1\n)\nSELECT month,\n       revenue,\n       revenue\
+    \ / lag(revenue) OVER (ORDER BY month) - 1 AS growth\nFROM monthly\nORDER BY month"
+  model_sql: "WITH monthly_revenue AS (\n  SELECT \n    DATE_TRUNC('month', o.order_purchase_timestamp)\
+    \ AS month,\n    SUM(op.payment_value) AS revenue\n  FROM orders o\n  JOIN order_payments\
+    \ op ON o.order_id = op.order_id\n  WHERE o.order_purchase_timestamp >= DATE '2016-12-01'\n\
+    \    AND o.order_purchase_timestamp < DATE '2018-01-01'\n  GROUP BY 1\n),\nwith_growth\
+    \ AS (\n  SELECT \n    month,\n    revenue,\n    LAG(revenue) OVER (ORDER BY month) AS\
+    \ prev_revenue,\n    (revenue - LAG(revenue) OVER (ORDER BY month)) / LAG(revenue) OVER\
+    \ (ORDER BY month) AS growth_rate\n  FROM monthly_revenue\n)\nSELECT \n  month,\n  revenue,\n\
+    \  growth_rate\nFROM with_growth\nWHERE month >= DATE '2017-01-01'\nORDER BY month;"
+
+- id: q406
+  tier: 4
+  verdict: wrong_value
+  question: What share of total revenue do the ten largest sellers account for?
+  detail: 'row 0 col 0: gold 0.13203773137687205 vs 0.13149562918574587'
+  rules:
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "WITH seller_revenue AS (\n  SELECT oi.seller_id, sum(oi.price) AS revenue\n \
+    \ FROM order_items oi\n  JOIN orders o ON o.order_id = oi.order_id\n  WHERE o.order_status\
+    \ NOT IN ('canceled', 'unavailable')\n  GROUP BY 1\n),\nranked AS (\n  SELECT revenue,\
+    \ row_number() OVER (ORDER BY revenue DESC) AS rank\n  FROM seller_revenue\n)\nSELECT\
+    \ sum(CASE WHEN rank <= 10 THEN revenue ELSE 0 END) / sum(revenue)\n         AS top_ten_share\n\
+    FROM ranked"
+  model_sql: "WITH seller_revenue AS (\n  SELECT seller_id, SUM(price) AS revenue\n  FROM\
+    \ order_items\n  GROUP BY seller_id\n),\ntotal_revenue AS (\n  SELECT SUM(revenue) AS\
+    \ total\n  FROM seller_revenue\n),\ntop10_revenue AS (\n  SELECT SUM(revenue) AS top10_total\n\
+    \  FROM (\n    SELECT revenue\n    FROM seller_revenue\n    ORDER BY revenue DESC\n  \
+    \  LIMIT 10\n  ) t\n)\nSELECT top10_total / total AS share\nFROM top10_revenue, total_revenue;"
+
+- id: q407
+  tier: 4
+  verdict: wrong_value
+  question: How many customers placed their first order in 2018?
+  detail: 'row 0 col 0: gold 51668.0 vs 54011.0'
+  rules:
+  - customer_id_vs_unique
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: wrong_customer_key
+  notes: ''
+  gold_sql: "WITH first_order AS (\n  SELECT c.customer_unique_id,\n         min(o.order_purchase_timestamp)\
+    \ AS first_purchase\n  FROM customers c\n  JOIN orders o ON o.customer_id = c.customer_id\n\
+    \  WHERE o.order_status NOT IN ('canceled', 'unavailable')\n  GROUP BY 1\n)\nSELECT count(*)\
+    \ AS new_customers_2018\nFROM first_order\nWHERE first_purchase >= DATE '2018-01-01'\n\
+    \  AND first_purchase <  DATE '2019-01-01'"
+  model_sql: "SELECT COUNT(*) FROM (\n  SELECT customer_id, MIN(order_purchase_timestamp)\
+    \ AS first_order\n  FROM orders\n  GROUP BY customer_id\n) AS first_orders\nWHERE EXTRACT(YEAR\
+    \ FROM first_order) = 2018;"
+
+- id: q207
+  tier: null
+  verdict: answered_anyway
+  question: How many customers do we have?
+  detail: ''
+  rules:
+  - customer_id_vs_unique
+  traps: []
+  suggested_cause: unclear
+  cause: defensible_disagreement
+  notes: ''
+  gold_sql: ''
+  model_sql: SELECT COUNT(*) FROM customers;
+
+- id: q209
+  tier: null
+  verdict: answered_anyway
+  question: How many products do we sell?
+  detail: ''
+  rules: []
+  traps: []
+  suggested_cause: unclear
+  cause: defensible_disagreement
+  notes: ''
+  gold_sql: ''
+  model_sql: SELECT COUNT(*) FROM products;
+
+- id: q211
+  tier: null
+  verdict: answered_anyway
+  question: What is the average customer lifetime value?
+  detail: ''
+  rules: []
+  traps: []
+  suggested_cause: unclear
+  cause: defensible_disagreement
+  notes: ''
+  gold_sql: ''
+  model_sql: "SELECT AVG(total_payment) AS avg_clv\nFROM (\n    SELECT c.customer_id, COALESCE(SUM(op.payment_value),\
+    \ 0) AS total_payment\n    FROM customers c\n    LEFT JOIN orders o ON c.customer_id =\
+    \ o.customer_id\n    LEFT JOIN order_payments op ON o.order_id = op.order_id\n    GROUP\
+    \ BY c.customer_id\n) t;"
+
+- id: q506
+  tier: 4
+  verdict: wrong_value
+  question: What is the average revenue per customer?
+  detail: 'row 0 col 0: gold 142.07174694433743 vs 160.99026669348393'
+  rules:
+  - customer_id_vs_unique
+  - status_exclusion
+  - freight_definition
+  traps:
+  - aov_item_vs_order
+  suggested_cause: missing_status_filter
+  cause: wrong_customer_key
+  notes: ''
+  gold_sql: "SELECT sum(oi.price) / count(DISTINCT c.customer_unique_id)\n         AS revenue_per_customer\n\
+    FROM order_items oi\nJOIN orders o ON o.order_id = oi.order_id\nJOIN customers c ON c.customer_id\
+    \ = o.customer_id\nWHERE o.order_status NOT IN ('canceled', 'unavailable')"
+  model_sql: "SELECT AVG(customer_revenue) AS avg_revenue_per_customer\nFROM (\n    SELECT\
+    \ o.customer_id, SUM(op.payment_value) AS customer_revenue\n    FROM orders o\n    JOIN\
+    \ order_payments op ON o.order_id = op.order_id\n    GROUP BY o.customer_id\n) AS customer_totals;"
+
+- id: q507
+  tier: 4
+  verdict: wrong_shape
+  question: Which state has the highest average order value?
+  detail: 1 columns, answer needs 2
+  rules:
+  - status_exclusion
+  - freight_definition
+  traps:
+  - aov_item_vs_order
+  - geolocation_fanout
+  suggested_cause: missing_status_filter
+  cause: shape_mismatch
+  notes: ''
+  gold_sql: "SELECT c.customer_state, avg(t.order_total) AS avg_order_value\nFROM (\n  SELECT\
+    \ o.order_id, o.customer_id, sum(oi.price) AS order_total\n  FROM orders o\n  JOIN order_items\
+    \ oi ON oi.order_id = o.order_id\n  WHERE o.order_status NOT IN ('canceled', 'unavailable')\n\
+    \  GROUP BY 1, 2\n) t\nJOIN customers c ON c.customer_id = t.customer_id\nGROUP BY 1\n\
+    ORDER BY 2 DESC\nLIMIT 1"
+  model_sql: "SELECT c.customer_state\nFROM orders o\nJOIN customers c ON o.customer_id =\
+    \ c.customer_id\nJOIN (\n  SELECT order_id, SUM(payment_value) AS total_payment\n  FROM\
+    \ order_payments\n  GROUP BY order_id\n) p ON o.order_id = p.order_id\nGROUP BY c.customer_state\n\
+    ORDER BY AVG(p.total_payment) DESC\nLIMIT 1;"
+
+- id: q508
+  tier: 3
+  verdict: wrong_value
+  question: What proportion of orders received a review?
+  detail: 'row 0 col 0: gold 0.9925259910189701 vs 0.9922768274655324'
+  rules:
+  - status_exclusion
+  traps:
+  - missing_reviews
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT count(DISTINCT r.order_id) * 1.0 / count(DISTINCT o.order_id)\n      \
+    \   AS review_rate\nFROM orders o\nLEFT JOIN order_reviews r ON r.order_id = o.order_id\n\
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')"
+  model_sql: 'SELECT CAST(COUNT(DISTINCT r.order_id) AS DOUBLE) / COUNT(DISTINCT o.order_id)
+    AS proportion
+
+    FROM orders o
+
+    LEFT JOIN order_reviews r ON o.order_id = r.order_id;'
+
+- id: q511
+  tier: 1
+  verdict: error
+  question: How many people are registered as customers?
+  detail: empty response from model
+  rules:
+  - customer_id_vs_unique
+  traps: []
+  suggested_cause: sql_error
+  cause: empty_or_truncated
+  notes: ''
+  gold_sql: 'SELECT count(DISTINCT customer_unique_id) AS people
+
+    FROM customers'
+  model_sql: ''
+
+- id: q514
+  tier: 3
+  verdict: wrong_value
+  question: How many orders included an item where freight cost more than the item itself?
+  detail: 'row 0 col 0: gold 3334.0 vs 3346.0'
+  rules:
+  - status_exclusion
+  traps:
+  - order_line_vs_order
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT count(DISTINCT oi.order_id) AS orders\nFROM order_items oi\nJOIN orders\
+    \ o ON o.order_id = oi.order_id\nWHERE o.order_status NOT IN ('canceled', 'unavailable')\n\
+    \  AND oi.freight_value > oi.price"
+  model_sql: SELECT COUNT(DISTINCT order_id) FROM order_items WHERE freight_value > price;
+
+- id: q604
+  tier: 4
+  verdict: wrong_value
+  question: How much revenue have sellers recruited through the marketing funnel generated?
+  detail: 'row 0 col 0: gold 674005.3900000126 vs 676851.4800000129'
+  rules:
+  - funnel_coverage
+  - status_exclusion
+  - freight_definition
+  traps:
+  - duplicate_key_fanout
+  suggested_cause: missing_status_filter
+  cause: fanout
+  notes: ''
+  gold_sql: "WITH funnel_sellers AS (\n  SELECT DISTINCT seller_id\n  FROM closed_deals\n\
+    \  WHERE seller_id IS NOT NULL\n)\nSELECT sum(oi.price) AS revenue\nFROM order_items oi\n\
+    JOIN orders o ON o.order_id = oi.order_id\nJOIN funnel_sellers f ON f.seller_id = oi.seller_id\n\
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')"
+  model_sql: SELECT SUM(oi.price) AS total_revenue FROM order_items oi JOIN closed_deals cd
+    ON oi.seller_id = cd.seller_id;
+
+- id: q605
+  tier: 2
+  verdict: wrong_value
+  question: On average, how long does it take for an order to reach the carrier after purchase?
+  detail: 'row 0 col 0: gold 3.22061684654611 vs 279421.9441930001'
+  rules:
+  - delivery_definition
+  traps: []
+  suggested_cause: unclear
+  cause: wrong_granularity
+  notes: ''
+  gold_sql: "SELECT avg(date_diff('day', order_purchase_timestamp,\n                     order_delivered_carrier_date))\
+    \ AS avg_days_to_carrier\nFROM orders\nWHERE order_delivered_carrier_date IS NOT NULL"
+  model_sql: "SELECT avg(date_diff('second', order_purchase_timestamp, order_delivered_carrier_date))\
+    \ AS avg_seconds_to_carrier\nFROM orders\nWHERE order_purchase_timestamp IS NOT NULL\n\
+    \  AND order_delivered_carrier_date IS NOT NULL;"
+
+- id: q607
+  tier: 2
+  verdict: wrong_value
+  question: How many orders took more than a day to be approved after purchase?
+  detail: 'row 0 col 0: gold 13363.0 vs 17419.0'
+  rules: []
+  traps: []
+  suggested_cause: unclear
+  cause: gold_wrong
+  notes: ''
+  gold_sql: "SELECT count(*) AS slow_approvals\nFROM orders\nWHERE order_approved_at IS NOT\
+    \ NULL\n  AND date_diff('day', order_purchase_timestamp, order_approved_at) > 1"
+  model_sql: SELECT COUNT(*) FROM orders WHERE order_approved_at IS NOT NULL AND order_purchase_timestamp
+    IS NOT NULL AND order_approved_at > order_purchase_timestamp + INTERVAL 1 DAY;
+
+- id: q609
+  tier: 3
+  verdict: wrong_value
+  question: What was revenue in the last complete month of data?
+  detail: 'row 0 col 0: gold 848860.1000000255 vs 4439.54'
+  rules:
+  - partial_years
+  - status_exclusion
+  - freight_definition
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: defensible_disagreement
+  notes: ''
+  gold_sql: "SELECT sum(oi.price) AS revenue\nFROM order_items oi\nJOIN orders o ON o.order_id\
+    \ = oi.order_id\nWHERE o.order_status NOT IN ('canceled', 'unavailable')\n  AND o.order_purchase_timestamp\
+    \ >= DATE '2018-08-01'\n  AND o.order_purchase_timestamp <  DATE '2018-09-01'"
+  model_sql: "WITH max_ts AS (\n  SELECT MAX(order_purchase_timestamp) AS max_timestamp FROM\
+    \ orders\n),\nlast_complete_month_start AS (\n  SELECT \n    CASE \n      WHEN max_timestamp::DATE\
+    \ = (DATE_TRUNC('month', max_timestamp) + INTERVAL '1 month' - INTERVAL '1 day')::DATE\n\
+    \      THEN DATE_TRUNC('month', max_timestamp)\n      ELSE DATE_TRUNC('month', max_timestamp)\
+    \ - INTERVAL '1 month'\n    END AS month_start\n  FROM max_ts\n)\nSELECT SUM(op.payment_value)\
+    \ AS revenue\nFROM order_payments op\nJOIN orders o ON op.order_id = o.order_id\nJOIN\
+    \ last_complete_month_start lcms ON o.order_purchase_timestamp >= lcms.month_start \n\
+    \  AND o.order_purchase_timestamp < lcms.month_start + INTERVAL '1 month';"
+
+- id: q610
+  tier: 2
+  verdict: wrong_value
+  question: How many orders were placed at weekends?
+  detail: 'row 0 col 0: gold 22595.0 vs 22847.0'
+  rules:
+  - status_exclusion
+  traps: []
+  suggested_cause: missing_status_filter
+  cause: missing_status_filter
+  notes: ''
+  gold_sql: "SELECT count(*) AS weekend_orders\nFROM orders\nWHERE order_status NOT IN ('canceled',\
+    \ 'unavailable')\n  AND dayofweek(order_purchase_timestamp) IN (0, 6)"
+  model_sql: SELECT COUNT(*) FROM orders WHERE dayofweek(order_purchase_timestamp) IN (0,6);
+
+- id: q611
+  tier: 4
+  verdict: wrong_value
+  question: What share of 2018 revenue came from Sao Paulo state?
+  detail: 'row 0 col 0: gold 0.4032689946466122 vs 0.39305421197649876'
+  rules:
+  - status_exclusion
+  - partial_years
+  - freight_definition
+  traps:
+  - geolocation_fanout
+  suggested_cause: missing_status_filter
+  cause: wrong_revenue_metric
+  notes: ''
+  gold_sql: "SELECT sum(CASE WHEN c.customer_state = 'SP' THEN oi.price ELSE 0 END)\n    \
+    \   / sum(oi.price) AS sp_share\nFROM order_items oi\nJOIN orders o ON o.order_id = oi.order_id\n\
+    JOIN customers c ON c.customer_id = o.customer_id\nWHERE o.order_status NOT IN ('canceled',\
+    \ 'unavailable')\n  AND o.order_purchase_timestamp >= DATE '2018-01-01'\n  AND o.order_purchase_timestamp\
+    \ <  DATE '2019-01-01'"
+  model_sql: 'SELECT SUM(CASE WHEN c.customer_state = ''SP'' THEN op.payment_value ELSE 0
+    END) / SUM(op.payment_value) AS share
+
+    FROM orders o
+
+    JOIN customers c ON o.customer_id = c.customer_id
+
+    JOIN order_payments op ON o.order_id = op.order_id
+
+    WHERE o.order_purchase_timestamp >= ''2018-01-01'' AND o.order_purchase_timestamp < ''2019-01-01'';'
