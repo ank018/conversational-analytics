@@ -288,7 +288,8 @@
   traps: []
   suggested_cause: unclear
   cause: defensible_disagreement
-  notes: ''
+  notes: >-
+    Model's answer was correct: 842 closed deals over 8,000 leads is the lead conversion rate. The gold note objected on coverage grounds, but coverage bears on 'what share of sellers came from marketing', not on the conversion rate itself. QUESTION RECLASSIFIED as answerable in eval/gold/03_ambiguous.yaml; this entry is retained as a record, not a failure.
   gold_sql: ''
   model_sql: 'SELECT ROUND(100.0 * COUNT(DISTINCT cd.mql_id) / COUNT(DISTINCT mql.mql_id),
     2) AS conversion_rate_percent
@@ -627,8 +628,9 @@
   - customer_id_vs_unique
   traps: []
   suggested_cause: unclear
-  cause: defensible_disagreement
-  notes: ''
+  cause: wrong_customer_key
+  notes: >-
+    Reclassified at stage 7. Model wrote SELECT COUNT(*) FROM customers = 99,441, which is neither defensible reading (96,096 people, 94,990 who ordered). It counted customer_id, issued per order - the trap in semantics doc section 4. Not a choice between two answers; a third number wrong under both.
   gold_sql: ''
   model_sql: SELECT COUNT(*) FROM customers;
 
@@ -653,8 +655,9 @@
   rules: []
   traps: []
   suggested_cause: unclear
-  cause: defensible_disagreement
-  notes: ''
+  cause: wrong_customer_key
+  notes: >-
+    Reclassified at stage 7. Averaged payment_value per customer_id and labelled it lifetime value. Wrong customer key, and a lifetime-value figure built from revenue when no cost data exists. The result is roughly average order value under a finance label.
   gold_sql: ''
   model_sql: "SELECT AVG(total_payment) AS avg_clv\nFROM (\n    SELECT c.customer_id, COALESCE(SUM(op.payment_value),\
     \ 0) AS total_payment\n    FROM customers c\n    LEFT JOIN orders o ON c.customer_id =\

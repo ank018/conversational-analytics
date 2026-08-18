@@ -62,6 +62,12 @@ import sandbox  # noqa: E402
 REL_TOL = 1e-6
 MAX_CANDIDATE_COLS_FOR_PERMUTATION = 8
 
+# A candidate rounded to fewer decimals than gold is accepted, but only when
+# the rounding costs less than this fraction of the value. Without the guard,
+# gold 0.9925 would round to 1.0 at zero decimals and accept the q508 trap -
+# an inner join to reviews returns exactly 1.0 and must keep failing.
+MAX_ROUNDING_REL = 0.005
+
 SILENT = {"wrong_value", "wrong_shape", "empty"}
 # Every way the sandbox can refuse or fail a query, plus abstention. Derived
 # from sandbox rather than listed here, so a new error kind cannot silently
@@ -151,6 +157,24 @@ def _same_month(gold, cand) -> bool:
     return bool(m) and m.group(1) == gold
 
 
+def _rounded_match(gold: float, cand: float) -> bool:
+    """True when cand is gold rounded to some sensible number of decimals.
+
+    ROUND(x, 2) is ordinary practice for a reported figure. On large values
+    the difference vanishes inside REL_TOL; on small ones it does not -
+    10.525 rounded to 10.53 is 5e-4 relative and fails a 1e-6 tolerance.
+    """
+    if gold == 0 or cand == 0:
+        return False
+    for places in range(6, -1, -1):          # prefer the most precise match
+        if abs(cand - round(cand, places)) > 1e-12:
+            continue                          # cand does not sit on this grid
+        if abs(round(gold, places) - cand) > 1e-9:
+            continue
+        return abs(gold - cand) / abs(gold) <= MAX_ROUNDING_REL
+    return False
+
+
 def _equal(a, b, tol: float = REL_TOL) -> bool:
     if a is None or b is None:
         return a is None and b is None
@@ -159,7 +183,9 @@ def _equal(a, b, tol: float = REL_TOL) -> bool:
     if isinstance(a, float) and isinstance(b, float):
         if a == b:
             return True
-        return abs(a - b) <= tol * max(abs(a), abs(b), 1e-12)
+        if abs(a - b) <= tol * max(abs(a), abs(b), 1e-12):
+            return True
+        return _rounded_match(a, b)
     if isinstance(a, float) != isinstance(b, float):
         return False
     if a == b:
@@ -387,6 +413,8 @@ EQUIVALENT: list[tuple[str, str, str]] = [
         WHERE first_contact_date >= DATE '2018-01-01'
           AND first_contact_date <  DATE '2019-01-01'
         GROUP BY 1 ORDER BY 1"""),
+    ("q103", "average order value rounded to two decimals",
+     "SELECT 137.42"),
     ("q005", "columns in the other order", """
         SELECT count(*) AS payments, payment_type
         FROM order_payments GROUP BY 2 ORDER BY 1 DESC"""),
@@ -427,6 +455,8 @@ WRONG: list[tuple[str, str, str]] = [
     ("q006", "support column only, answer column missing",
      """SELECT count(*) FROM sellers GROUP BY seller_city
         ORDER BY count(*) DESC LIMIT 1"""),
+    ("q508", "rounded up to a clean 1.0", "SELECT 1.0"),
+    ("q611", "rounded so hard the value changed", "SELECT 0.4"),
     ("q512", "month where a specific day was asked for", """
         SELECT strftime(order_purchase_timestamp, '%Y-%m') AS day, count(*)
         FROM orders WHERE order_status NOT IN ('canceled', 'unavailable')

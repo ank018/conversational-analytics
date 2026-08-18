@@ -75,6 +75,7 @@
   kind: answerable
   tier: 1
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT payment_type, count(*) AS payments
     FROM order_payments
@@ -93,6 +94,7 @@
   kind: answerable
   tier: 1
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT seller_city, count(*) AS sellers
     FROM sellers
@@ -170,6 +172,7 @@
   kind: answerable
   tier: 2
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT c.customer_state, count(DISTINCT c.customer_unique_id) AS customers
     FROM customers c

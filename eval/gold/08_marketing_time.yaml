@@ -59,6 +59,7 @@
   kind: answerable
   tier: 3
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT m.origin, count(*) AS deals
     FROM closed_deals d
@@ -147,13 +148,23 @@
     SELECT count(*) AS slow_approvals
     FROM orders
     WHERE order_approved_at IS NOT NULL
-      AND date_diff('day', order_purchase_timestamp, order_approved_at) > 1
+      AND order_approved_at > order_purchase_timestamp + INTERVAL 1 DAY
   tags: [count, dates, payments]
   rules: []
   traps: []
   notes: >
-    Uses the fifth date column, which no other question touches. 160 orders
-    have no approval date and are excluded rather than counted as slow.
+    Expect 17,419. Uses the fifth date column, which no other question
+    touches. 160 orders have no approval date and are excluded rather than
+    counted as slow.
+
+    GOLD CORRECTED at stage 7. The original used
+    date_diff('day', purchase, approved) > 1, which counts calendar
+    boundaries crossed rather than elapsed time - an order placed Monday
+    01:00 and approved Tuesday 23:00 took 46 hours but crosses one boundary,
+    and was excluded. The interval comparison is a true 24-hour test and is
+    the correct reading of "more than a day". The original gold returned
+    13,363 and would have penalised every correct answer for the rest of the
+    project.
   verified: true
 
 - id: q608
@@ -161,6 +172,7 @@
   kind: answerable
   tier: 4
   ordered: true
+  answer_columns: 1
   sql: |
     WITH first_order AS (
       SELECT c.customer_unique_id,

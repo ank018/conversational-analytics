@@ -18,6 +18,7 @@
   kind: answerable
   tier: 3
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT oi.seller_id, count(DISTINCT oi.order_id) AS orders
     FROM order_items oi
@@ -194,6 +195,7 @@
   kind: answerable
   tier: 3
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT oi.product_id, count(*) AS units_sold
     FROM order_items oi
@@ -239,6 +241,7 @@
   kind: answerable
   tier: 2
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT cast(order_purchase_timestamp AS DATE) AS day, count(*) AS orders
     FROM orders

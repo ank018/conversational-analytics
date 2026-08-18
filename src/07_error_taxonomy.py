@@ -243,7 +243,12 @@ def summarise() -> None:
 
     # Predicted ceilings. Written down before stage 9 runs so the prediction
     # can be checked rather than reconstructed afterwards.
-    n_answerable = 74
+    # Read the denominator from the gold set rather than hardcoding it.
+    # Questions move between kinds - q205 was reclassified from unsupported to
+    # answerable at stage 7 - and a stale constant silently shifts every
+    # percentage below.
+    questions, _ = goldmod.load_gold(verified_only=True)
+    n_answerable = sum(1 for q in questions if q.kind == "answerable")
     n_correct = n_answerable - len(answerable)
     print(f"\n  predicted ceiling if each intervention fixed every failure "
           f"it plausibly could")

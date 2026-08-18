@@ -112,6 +112,7 @@
   kind: answerable
   tier: 4
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT coalesce(t.product_category_name_english, 'unknown') AS category,
            sum(oi.price) AS revenue
@@ -138,6 +139,7 @@
   kind: answerable
   tier: 3
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT oi.seller_id, sum(oi.price) AS revenue
     FROM order_items oi
@@ -179,6 +181,7 @@
   kind: answerable
   tier: 3
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT strftime(o.order_purchase_timestamp, '%Y-%m') AS month,
            sum(oi.price) AS revenue

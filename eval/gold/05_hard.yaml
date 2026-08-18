@@ -69,6 +69,7 @@
   kind: answerable
   tier: 4
   ordered: true
+  answer_columns: 1
   sql: |
     WITH order_category AS (
       SELECT DISTINCT o.order_id,
@@ -139,6 +140,7 @@
   kind: answerable
   tier: 4
   ordered: true
+  answer_columns: 1
   sql: |
     WITH seller_orders AS (
       SELECT DISTINCT oi.seller_id, o.order_id

@@ -57,18 +57,38 @@
   verified: true
 
 - id: q205
-  question: What is our lead conversion rate?
-  kind: unsupported
-  tags: [marketing]
+  question: What is our lead conversion rate, as a percentage?
+  kind: answerable
+  tier: 3
+  ordered: false
+  sql: |
+    SELECT 100.0 * count(DISTINCT d.mql_id) / count(DISTINCT m.mql_id)
+             AS conversion_rate_percent
+    FROM marketing_qualified_leads m
+    LEFT JOIN closed_deals d ON d.mql_id = m.mql_id
+  tags: [marketing, rate]
   rules: [funnel_coverage]
   traps: []
   notes: >
-    Computable in appearance - 842 closed deals against 8,000 qualified leads
-    - but only 380 of those deals match a seller in the marketplace, so the
-    funnel covers 12.3% of sellers and is not a random sample. Correct
-    behaviour: give the figure only with the coverage caveat, or decline.
-    This is the hardest question in the set: the naive answer runs, returns a
-    clean 10.5%, and is misleading.
+    Expect about 10.53 - 842 closed deals against 8,000 qualified leads.
+
+    The question names the unit. The original said only "conversion rate",
+    which does not distinguish 0.1053 from 10.53%, and the model answered in
+    percent while gold answered as a proportion - the same rate, scored
+    wrong. Percent-versus-proportion is an ambiguity in the question, not
+    something the evaluator should paper over, so it is fixed here.
+
+    RECLASSIFIED at stage 7. This was originally marked unsupported on the
+    grounds that only 380 of 842 deals match a seller, so the funnel covers
+    12.3% of sellers and is not a random sample. That objection is real but
+    bears on a different question - "what share of our sellers came from
+    marketing" - not on the conversion rate, which is well defined as deals
+    over leads. The question as written has a correct answer, so marking it
+    unanswerable would have penalised a model that got it right.
+
+    The coverage caveat still belongs in the answer, but as narrative
+    accompanying the number rather than as a reason to refuse. That is the
+    stage 13 layer's job, not SQL's.
   verified: true
 
 - id: q206

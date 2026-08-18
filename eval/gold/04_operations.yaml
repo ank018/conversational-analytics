@@ -33,6 +33,7 @@
   kind: answerable
   tier: 4
   ordered: true
+  answer_columns: 2
   sql: |
     SELECT CASE WHEN o.order_delivered_customer_date
                      > o.order_estimated_delivery_date
@@ -215,6 +216,7 @@
   kind: answerable
   tier: 2
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT payment_type, avg(payment_value) AS avg_value
     FROM order_payments
@@ -299,6 +301,7 @@
   kind: answerable
   tier: 2
   ordered: true
+  answer_columns: 1
   sql: |
     SELECT seller_state, count(*) AS sellers
     FROM sellers
