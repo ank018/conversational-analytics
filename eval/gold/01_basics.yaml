@@ -149,7 +149,7 @@
   question: How many orders were placed in each month of 2017?
   kind: answerable
   tier: 2
-  ordered: true
+  ordered: false
   sql: |
     SELECT strftime(order_purchase_timestamp, '%Y-%m') AS month,
            count(*) AS orders
@@ -165,6 +165,14 @@
   notes: >
     Twelve rows. November peaks - Black Friday. 2017 is chosen deliberately
     because it is the only complete year.
+
+    SCORING CORRECTED at stage 10. `ordered` was true, but the question
+    does not ask for an ordering - the rows are labelled, so comparing them
+    as a set is the right semantics and gold's ORDER BY is presentation.
+    Found because q302 flipped between two runs of byte-identical SQL: with
+    no ORDER BY, DuckDB returned the two rows in whichever order the
+    execution produced, and the verdict followed the coin. The SQL is
+    unchanged; only what counts as a matching result has changed.
   verified: true
 
 - id: q010

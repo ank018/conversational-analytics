@@ -244,7 +244,7 @@
   question: Compare total revenue in 2017 against 2018.
   kind: answerable
   tier: 4
-  ordered: true
+  ordered: false
   sql: |
     SELECT year(o.order_purchase_timestamp) AS year,
            sum(oi.price) AS revenue
@@ -261,4 +261,12 @@
     The SQL is the standard, but the honest answer carries a caveat: 2018 data
     stops in August, so the comparison is eight months against twelve. Used at
     stage 9 to test whether the glossary surfaces the caveat.
+
+    SCORING CORRECTED at stage 10. `ordered` was true, but the question
+    does not ask for an ordering - the rows are labelled, so comparing them
+    as a set is the right semantics and gold's ORDER BY is presentation.
+    Found because q302 flipped between two runs of byte-identical SQL: with
+    no ORDER BY, DuckDB returned the two rows in whichever order the
+    execution produced, and the verdict followed the coin. The SQL is
+    unchanged; only what counts as a matching result has changed.
   verified: true

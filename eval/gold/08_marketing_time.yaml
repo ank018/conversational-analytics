@@ -13,7 +13,7 @@
   question: How many marketing leads were first contacted in each month of 2018?
   kind: answerable
   tier: 2
-  ordered: true
+  ordered: false
   sql: |
     SELECT strftime(first_contact_date, '%Y-%m') AS month,
            count(*) AS leads
@@ -35,6 +35,14 @@
     The date filter also confirms first_contact_date was read as a real date
     rather than text, so comparisons on this table are date arithmetic and not
     string comparison working by accident.
+
+    SCORING CORRECTED at stage 10. `ordered` was true, but the question
+    does not ask for an ordering - the rows are labelled, so comparing them
+    as a set is the right semantics and gold's ORDER BY is presentation.
+    Found because q302 flipped between two runs of byte-identical SQL: with
+    no ORDER BY, DuckDB returned the two rows in whichever order the
+    execution produced, and the verdict followed the coin. The SQL is
+    unchanged; only what counts as a matching result has changed.
   verified: true
 
 - id: q602

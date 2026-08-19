@@ -32,7 +32,7 @@
   question: Do orders delivered late receive lower review scores?
   kind: answerable
   tier: 4
-  ordered: true
+  ordered: false
   answer_columns: 2
   sql: |
     SELECT CASE WHEN o.order_delivered_customer_date
@@ -53,6 +53,14 @@
     Two rows. Reviews join to orders one-to-one here, so no fan-out - but 768
     orders carry no review and drop out of the inner join. That is acceptable
     for a comparison of means; it would not be for a count.
+
+    SCORING CORRECTED at stage 10. `ordered` was true, but the question
+    does not ask for an ordering - the rows are labelled, so comparing them
+    as a set is the right semantics and gold's ORDER BY is presentation.
+    Found because q302 flipped between two runs of byte-identical SQL: with
+    no ORDER BY, DuckDB returned the two rows in whichever order the
+    execution produced, and the verdict followed the coin. The SQL is
+    unchanged; only what counts as a matching result has changed.
   verified: true
 
 - id: q303

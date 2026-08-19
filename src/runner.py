@@ -87,6 +87,7 @@ class SuiteResult:
     n_llm_failed: int = 0
     n_truncated: int = 0
     empties: list[tuple] = field(default_factory=list)
+    repairs: list[dict] = field(default_factory=list)
     path: Path | None = None
 
     @property
@@ -121,6 +122,8 @@ def run_suite(tag: str,
               pace: float = 1.5,
               limit: int | None = None,
               cache_bust: int = 0,
+              max_attempts: int = 1,
+              repair_prompt_fn=None,
               quiet: bool = False,
               extra_meta: dict | None = None) -> SuiteResult:
     questions, problems = goldmod.load_gold(verified_only=True)
@@ -196,7 +199,44 @@ def run_suite(tag: str,
                 print(f"  {i:>3} {q.id:<7} tier {q.tier}      VIS  "
                       f"{kind:<12} {reason[:36]}")
         else:
+            # Self-repair. The trigger must be something the system can see
+            # WITHOUT the gold answer: the query crashed, or it returned no
+            # rows. A query that runs and returns a plausible wrong number is
+            # indistinguishable from a correct one at this point, which is
+            # precisely why repair cannot touch silent errors.
+            attempts = 1
+            if max_attempts > 1 and repair_prompt_fn is not None:
+                for attempt in range(2, max_attempts + 1):
+                    probe = sandbox.run(sql, con=con)
+                    if probe.ok and probe.rows:
+                        break
+                    trigger = (probe.error_kind if not probe.ok
+                               else "empty_result")
+                    fix = llm.complete(
+                        repair_prompt_fn(q, sql, probe, attempt),
+                        model=model, temperature=temperature, cache=cache,
+                        provider=provider, pace_s=pace, max_tokens=max_tokens,
+                        cache_bust=cache_bust * 1000 + attempt)
+                    res.tok_in += fix.prompt_tokens
+                    res.tok_out += fix.completion_tokens
+                    res.tok_reason += fix.reasoning_tokens
+                    if fix.cost is not None:
+                        res.cost += fix.cost
+                    res.n_cached += fix.cached
+                    if not fix.ok:
+                        break
+                    new_sql, _, new_outcome = extract_sql(fix.text)
+                    res.repairs.append({
+                        "id": q.id, "attempt": attempt, "trigger": trigger,
+                        "error": probe.error, "before": sql,
+                        "after": new_sql, "accepted": new_outcome == "sql"})
+                    if new_outcome != "sql":
+                        break
+                    sql = new_sql
+                    attempts = attempt
+            rec["attempts"] = attempts
             v = evaluator.evaluate(q, sql, gold_cache)
+            rec["final_sql"] = sql
             res.verdicts.append(v)
             rec["verdict"] = v.kind
             rec["detail"] = v.detail
@@ -309,6 +349,16 @@ def print_summary(res: SuiteResult, price_in: float | None = None,
         print(f"    per question        ${est/max(len(res.records),1):.5f}")
     else:
         print("    cost                not reported; pass --price-in/--price-out")
+
+    if res.repairs:
+        fired = {r["id"] for r in res.repairs}
+        print(f"\n  self-repair")
+        print(f"    triggered on       {len(fired)} questions "
+              f"({len(res.repairs)} attempts)")
+        for r in res.repairs:
+            print(f"      {r['id']:<7} attempt {r['attempt']} "
+                  f"trigger={r['trigger']:<14} "
+                  f"{'new sql' if r['accepted'] else 'no usable sql'}")
 
     if res.empties:
         print(f"\n  EMPTY RESPONSES ({len(res.empties)})")

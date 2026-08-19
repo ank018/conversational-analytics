@@ -11,7 +11,7 @@
   question: Compare revenue for January to August 2017 against the same period in 2018.
   kind: answerable
   tier: 4
-  ordered: true
+  ordered: false
   sql: |
     SELECT year(o.order_purchase_timestamp) AS year,
            sum(oi.price) AS revenue
@@ -31,6 +31,14 @@
     window the data actually covers. Keep both: q112 tests whether the system
     volunteers the caveat, this one tests whether it can build the correct
     comparison when asked directly.
+
+    SCORING CORRECTED at stage 10. `ordered` was true, but the question
+    does not ask for an ordering - the rows are labelled, so comparing them
+    as a set is the right semantics and gold's ORDER BY is presentation.
+    Found because q302 flipped between two runs of byte-identical SQL: with
+    no ORDER BY, DuckDB returned the two rows in whichever order the
+    execution produced, and the verdict followed the coin. The SQL is
+    unchanged; only what counts as a matching result has changed.
   verified: true
 
 - id: q402
@@ -110,7 +118,7 @@
   question: What was the month-on-month revenue growth rate through 2017?
   kind: answerable
   tier: 4
-  ordered: true
+  ordered: false
   sql: |
     WITH monthly AS (
       SELECT strftime(o.order_purchase_timestamp, '%Y-%m') AS month,
@@ -133,6 +141,14 @@
   notes: >
     Twelve rows; growth is null in January because there is no prior month
     inside the window. That null is correct and must not be filled with zero.
+
+    SCORING CORRECTED at stage 10. `ordered` was true, but the question
+    does not ask for an ordering - the rows are labelled, so comparing them
+    as a set is the right semantics and gold's ORDER BY is presentation.
+    Found because q302 flipped between two runs of byte-identical SQL: with
+    no ORDER BY, DuckDB returned the two rows in whichever order the
+    execution produced, and the verdict followed the coin. The SQL is
+    unchanged; only what counts as a matching result has changed.
   verified: true
 
 - id: q405
