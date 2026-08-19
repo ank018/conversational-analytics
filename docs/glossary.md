@@ -10,6 +10,20 @@ This file is injected verbatim into the prompt at stage 9. It is deliberately
 short. The source document runs to several pages of reasoning and measured
 figures; a model needs the conclusions, not the workings.
 
+**One post-hoc correction, disclosed.** The scope of the status exclusion
+originally read "revenue, order counts, item counts, and customer counts".
+That contradicted the gold set, which — consistently across q605, q606 and
+q607 — applies no status filter to questions about how long a process took.
+Two documents disagreed and one had to be wrong; the wording below resolves
+it. Headline results are reported against the ORIGINAL wording, with the
+corrected figure alongside, so no number depends on a change made after
+seeing the outcome.
+
+Nothing else was changed. In particular the payment-row exception, which the
+model violated on q111 and q313, is stated exactly as it was. Strengthening
+it would be tuning the prompt against the test set, and the violation is a
+result worth keeping.
+
 ---
 
 ## Revenue
@@ -26,9 +40,15 @@ an error.
 
 Exclude orders whose `order_status` is `canceled` or `unavailable`.
 
-This applies to revenue, order counts, item counts, and customer counts
-reached through orders. It does **not** apply to counts of payment rows or
-review rows aggregated from their own tables.
+This applies to questions about commercial activity: revenue, sales, order
+counts, item counts, and customer counts reached through orders.
+
+It does **not** apply to:
+
+- counts of payment rows or review rows aggregated from their own tables;
+- questions about how long a process took — approval, dispatch, delivery.
+  An order that was later cancelled still took two days to be approved, and
+  the exclusion does not erase that.
 
 Other statuses — `shipped`, `invoiced`, `processing`, `created`, `approved` —
 are included. They are live commerce that has not yet completed.
