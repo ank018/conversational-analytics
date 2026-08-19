@@ -1,0 +1,111 @@
+# Column notes - factual descriptions for the stage 8 schema ablation.
+#
+# THE RULE FOR THIS FILE: say what a column CONTAINS. Never say what to do
+# with it.
+#
+# Stage 8 measures whether describing the schema helps. Stage 9 measures
+# whether stating the business rules helps. If a rule leaks into this file,
+# the two stages measure the same thing and the ablation table is worthless.
+#
+#   allowed:    "customer_id is issued per order, so it is not stable across
+#                a person's orders."           <- a fact about the data
+#   NOT allowed: "Count customers using customer_unique_id."
+#                                              <- a rule; belongs in stage 9
+#
+# Only genuinely ambiguous columns appear here. Describing seller_city adds
+# tokens and no information, and part of what this stage measures is whether
+# selective description beats exhaustive description.
+
+customers:
+  customer_id: >
+    Identifier for the customer record attached to one order. A new value is
+    issued for every order, so it does not remain the same across a person's
+    orders.
+  customer_unique_id: >
+    Identifier for a person, stable across all of that person's orders.
+
+orders:
+  order_status: >
+    State the order reached. Values include delivered, shipped, canceled,
+    unavailable, invoiced, processing, created and approved.
+  order_purchase_timestamp: >
+    When the customer placed the order. Never null.
+  order_approved_at: >
+    When payment for the order was approved.
+  order_delivered_carrier_date: >
+    When the parcel was handed over to the carrier.
+  order_delivered_customer_date: >
+    When the customer received the parcel. Null where delivery has not
+    happened.
+  order_estimated_delivery_date: >
+    Delivery date promised to the customer at the time of purchase.
+
+order_items:
+  order_item_id: >
+    Sequence number of this line within the order, starting at 1. Not a
+    product identifier.
+  price: >
+    Amount charged for the item itself, excluding shipping.
+  freight_value: >
+    Shipping charged on this item line. Charged per line, not per order.
+  shipping_limit_date: >
+    Deadline by which the seller must hand this item to the carrier.
+
+order_payments:
+  payment_sequential: >
+    Sequence number of this payment within the order. One order may have
+    several payment rows, for example when instalments or vouchers are used.
+  payment_type: >
+    Instrument used. Values include credit_card, boleto, voucher, debit_card
+    and not_defined.
+  payment_installments: >
+    Number of instalments agreed for this payment.
+  payment_value: >
+    Amount recorded on this single payment row, not the order total.
+
+order_reviews:
+  review_id: >
+    Identifier for a review. Not unique - some values appear against more
+    than one order.
+  review_score: >
+    Rating from 1 to 5.
+  review_creation_date: >
+    When the review survey was sent to the customer.
+  review_answer_timestamp: >
+    When the customer submitted the review.
+
+products:
+  product_name_lenght: >
+    Number of characters in the product name. A text length, not a physical
+    dimension. Spelled as in the source data.
+  product_description_lenght: >
+    Number of characters in the product description. Spelled as in the source
+    data.
+  product_length_cm: >
+    Physical length of the product in centimetres.
+  product_category_name: >
+    Category in Portuguese. Null for some products, and a few values have no
+    matching row in product_category_translation.
+
+geolocation:
+  geolocation_zip_code_prefix: >
+    First five digits of a Brazilian postcode. Many rows share the same
+    prefix - the table averages about 53 rows per prefix.
+
+closed_deals:
+  mql_id: >
+    Lead this deal came from. Joins to marketing_qualified_leads.mql_id.
+  seller_id: >
+    Marketplace seller created by this deal. Null for most rows, and only a
+    minority match a row in sellers.
+  won_date: >
+    When the deal closed.
+
+marketing_qualified_leads:
+  mql_id: >
+    Lead identifier.
+  first_contact_date: >
+    Date of first contact with the lead. This table covers a shorter period
+    than the orders tables.
+  origin: >
+    Channel the lead arrived through.
