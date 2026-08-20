@@ -1,0 +1,20 @@
+# Keep the image to what the demo needs at runtime.
+.venv/
+__pycache__/
+*.pyc
+.git/
+.github/
+.env
+reports/
+notebooks/
+
+# Raw CSVs are only needed to build the warehouse, which is already built.
+data/raw/
+
+# The response cache is a development convenience and can be large.
+data/llm_cache.sqlite
+
+# Scripts that only run during evaluation. Kept out of the image; kept in
+# the repo, which is where they matter.
+src/0*_*.py
+src/1*_*.py

@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversational Analytics — how often is the answer right?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#16202b;
+  --paper:#f7f8fa;
+  --card:#ffffff;
+  --rule:#d5dbe3;
+  --steel:#5b6b7f;
+  --right:#0f6b52;
+  --silent:#96650a;
+  --silent-bg:#fdf6e7;
+  --broken:#a3282b;
+  --mark:#2f4f7a;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--sans);font-size:15px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--mark)}
+.wrap{max-width:1060px;margin:0 auto;padding:28px 20px 72px}
+
+header{border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:30px}
+.eyebrow{
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--steel);margin-bottom:6px;
+}
+h1{font-size:27px;font-weight:600;margin:0;letter-spacing:-.015em}
+.sub{color:var(--steel);font-size:14.5px;margin-top:7px;max-width:70ch}
+.facts{
+  display:flex;flex-wrap:wrap;gap:0 26px;margin-top:14px;
+  font-family:var(--mono);font-size:11.5px;color:var(--steel);
+}
+.facts b{color:var(--ink);font-weight:600}
+
+section{margin-bottom:38px}
+.sec-hd{
+  font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--steel);
+  padding-bottom:8px;border-bottom:1px solid var(--rule);margin-bottom:18px;
+}
+h2{font-size:19px;font-weight:600;margin:0 0 8px;letter-spacing:-.01em}
+.lede{color:var(--steel);max-width:74ch;margin:0 0 18px}
+
+.panel{background:var(--card);border:1px solid var(--rule);border-radius:3px}
+.panel-bd{padding:18px}
+
+/* ---- silent error demo ---- */
+.demo-q{
+  font-family:var(--mono);font-size:15px;padding:13px 16px;
+  background:var(--card);border:1px solid var(--rule);border-left:3px solid var(--mark);
+  border-radius:3px;margin-bottom:16px;
+}
+.demo-q span{color:var(--steel);font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;display:block;margin-bottom:4px}
+.tabs{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:-1px}
+.tab{
+  font-family:var(--mono);font-size:12px;padding:8px 13px;cursor:pointer;
+  background:#eef1f5;border:1px solid var(--rule);border-bottom-color:transparent;
+  border-radius:3px 3px 0 0;color:var(--steel);
+}
+.tab:hover{background:#e6ebf1;color:var(--ink)}
+.tab[aria-selected="true"]{background:var(--card);color:var(--ink);font-weight:600}
+.tab .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:1px}
+.dot.ok{background:var(--right)}.dot.sil{background:var(--silent)}
+.demo-body{border:1px solid var(--rule);border-radius:0 3px 3px 3px;background:var(--card);padding:18px}
+.demo-grid{display:grid;grid-template-columns:1fr 260px;gap:20px;align-items:start}
+@media (max-width:760px){.demo-grid{grid-template-columns:1fr}}
+pre{
+  font-family:var(--mono);font-size:12.5px;line-height:1.6;margin:0;
+  background:#f4f6f9;border:1px solid var(--rule);border-radius:2px;
+  padding:13px 14px;overflow-x:auto;white-space:pre;
+}
+.result{border:1px solid var(--rule);border-radius:2px;padding:15px}
+.result .lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--steel);margin-bottom:6px}
+.result .val{font-family:var(--mono);font-size:22px;font-weight:600;letter-spacing:-.02em}
+.badge{
+  display:inline-block;font-family:var(--mono);font-size:10.5px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:2px;margin-top:11px;
+}
+.badge.ok{background:#e7f2ee;color:var(--right)}
+.badge.sil{background:var(--silent-bg);color:var(--silent)}
+.why{font-size:13px;color:var(--steel);margin-top:12px}
+.drift{font-family:var(--mono);font-size:12px;margin-top:8px;color:var(--silent)}
+.punch{
+  margin-top:16px;padding:13px 16px;border-radius:3px;
+  background:var(--silent-bg);border:1px solid #ecd9a8;font-size:14px;
+}
+
+/* ---- ablation ---- */
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--rule)}
+th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--steel);font-weight:600;
+}
+td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
+tr.hero td{background:#f2f7f5}
+tr.hero td:first-child{font-weight:600}
+.bar{position:relative;height:7px;background:#e8ecf1;border-radius:3px;margin-top:6px;width:100%}
+.bar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--steel)}
+tr.hero .bar i{background:var(--right)}
+.verdict{font-family:var(--mono);font-size:11px}
+.verdict.below{color:var(--steel)}
+.verdict.real{color:var(--right);font-weight:600}
+.note{font-size:13px;color:var(--steel);margin-top:14px;max-width:78ch}
+.note code{font-family:var(--mono);font-size:12.5px}
+
+/* ---- findings ---- */
+.finds{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:760px){.finds{grid-template-columns:1fr}}
+.find{background:var(--card);border:1px solid var(--rule);border-radius:3px;padding:16px 18px}
+.find .n{font-family:var(--mono);font-size:11px;color:var(--steel);letter-spacing:.12em}
+.find h3{font-size:15.5px;margin:5px 0 7px;font-weight:600}
+.find p{margin:0;font-size:13.5px;color:var(--steel)}
+.find .big{font-family:var(--mono);font-size:20px;font-weight:600;color:var(--ink);
+  display:block;margin:9px 0 4px;letter-spacing:-.02em}
+
+/* ---- method ---- */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+@media (max-width:760px){.cols{grid-template-columns:1fr}}
+ol,ul{margin:0;padding-left:19px;font-size:14px;color:var(--steel)}
+li{margin-bottom:7px}
+li b{color:var(--ink);font-weight:600}
+footer{border-top:1px solid var(--rule);margin-top:8px;padding-top:16px;
+  font-size:13px;color:var(--steel);display:flex;flex-wrap:wrap;gap:8px 22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Project 02 · Text-to-SQL over a real warehouse</div>
+  <h1>Conversational Analytics</h1>
+  <p class="sub">Ask a Brazilian e-commerce warehouse a question in English and get an
+  answer. The interesting question is not whether it answers — it always answers —
+  but how often the answer is right, and how you would ever know.</p>
+  <div class="facts">
+    <span><b>99,441</b> orders</span>
+    <span><b>11</b> tables</span>
+    <span><b>86</b> hand-written evaluation questions</span>
+    <span><b>4</b> runs per configuration</span>
+  </div>
+</header>
+
+<section>
+  <div class="sec-hd">The problem</div>
+  <h2>Four of these queries run without error. One is right.</h2>
+  <p class="lede">Every tab below is valid SQL against the same warehouse. Every one
+  returns a clean number in under a second. No error, no warning, nothing to suggest
+  a problem. Three of them are wrong.</p>
+
+  <div class="demo-q"><span>Question asked</span>What was total revenue?</div>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="demo-body">
+    <div class="demo-grid">
+      <pre id="sql"></pre>
+      <div>
+        <div class="result">
+          <div class="lbl">Returned</div>
+          <div class="val" id="val"></div>
+          <div id="badge"></div>
+          <div class="drift" id="drift"></div>
+        </div>
+        <p class="why" id="why"></p>
+      </div>
+    </div>
+    <div class="punch" id="punch"></div>
+  </div>
+
+  <p class="note">Revenue here means product price, excluding freight, over orders that
+  were not cancelled or unavailable. That decision appears <b>nowhere in the database</b> —
+  not in a column name, not in a comment, not in the data. It exists only because
+  someone wrote it down. No model can infer it.</p>
+</section>
+
+<section>
+  <div class="sec-hd">Ablation</div>
+  <h2>What actually moved the number</h2>
+  <p class="lede">Same 75 questions, same model, same warehouse. Three runs per
+  configuration. The only thing that changes is what goes into the prompt.</p>
+
+  <div class="panel"><div class="panel-bd">
+    <table>
+      <thead><tr>
+        <th style="width:32%">Configuration</th>
+        <th class="num">Accuracy</th>
+        <th class="num">Delta</th>
+        <th class="num">Silent errors</th>
+        <th class="num">Prompt tokens</th>
+        <th>Verdict</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td>Schema only<div class="bar"><i style="width:50.7%"></i></div></td>
+          <td class="num">50.7%</td><td class="num">—</td>
+          <td class="num">48.9%</td><td class="num">653</td>
+          <td class="verdict below">baseline</td>
+        </tr>
+        <tr>
+          <td>+ documented schema<div class="bar"><i style="width:49.3%"></i></div></td>
+          <td class="num">49.3%</td><td class="num">−1.4</td>
+          <td class="num">~50%</td><td class="num">3,196</td>
+          <td class="verdict below">below noise</td>
+        </tr>
+        <tr class="hero">
+          <td>+ business rules<div class="bar"><i style="width:86.7%"></i></div></td>
+          <td class="num">86.7%</td><td class="num">+36.0</td>
+          <td class="num">12.4%</td><td class="num">1,741</td>
+          <td class="verdict real">13.1× noise</td>
+        </tr>
+        <tr>
+          <td>+ execution retry<div class="bar"><i style="width:86.7%"></i></div></td>
+          <td class="num">86.7%</td><td class="num">+0.0</td>
+          <td class="num">12.4%</td><td class="num">1,741</td>
+          <td class="verdict below">never fired</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="note"><b>Noise floor 2.7 points.</b> Four runs of a byte-identical prompt at
+    temperature zero spanned 2.7 percentage points. Any delta smaller than that has not
+    been demonstrated. The documented-schema row ran twice rather than three times, with
+    dropped calls to provider rate limits; its prompts are 5.7× the baseline and it was
+    the slowest configuration in the project. The schema-plus-rules interaction was not
+    measured, so the negative result covers a bare prompt only.</p>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-hd">Findings</div>
+  <div class="finds">
+    <div class="find">
+      <div class="n">01</div>
+      <h3>Most wrong answers look right</h3>
+      <span class="big">48.9% → 12.4%</span>
+      <p>Of 75 questions, one failed visibly. Thirty-seven returned a clean, plausible,
+      incorrect number. Execution accuracy alone hides this; it is the figure a business
+      should actually care about, and it is almost never reported.</p>
+    </div>
+    <div class="find">
+      <div class="n">02</div>
+      <h3>One page of definitions was worth 36 points</h3>
+      <span class="big">+36.0 pts</span>
+      <p>What revenue means, which orders count as sales, what a customer is, which of five
+      date columns is “delivery”. A single rule — exclude cancelled and unavailable orders —
+      accounted for 24 of the 27 recovered questions.</p>
+    </div>
+    <div class="find">
+      <div class="n">03</div>
+      <h3>Documenting the schema did nothing</h3>
+      <span class="big">−1.4 pts, 5.7× cost</span>
+      <p>Foreign keys, sample values, ranges, null counts, written notes on every ambiguous
+      column. No measurable change, materially slower, more rate-limited. This is the fix
+      most teams reach for first.</p>
+    </div>
+    <div class="find">
+      <div class="n">04</div>
+      <h3>Retry loops had nothing to fix</h3>
+      <span class="big">0 of 225</span>
+      <p>Repair can only trigger on a query that errors or returns nothing. Across 225
+      question-runs with the rules in place, no query did either. Wrongness was semantic,
+      and semantics leave no trace at execution time.</p>
+    </div>
+    <div class="find">
+      <div class="n">05</div>
+      <h3>A single run is not a measurement</h3>
+      <span class="big">± 2.7 pts</span>
+      <p>Four runs of an identical prompt at temperature zero spanned 2.7 points, with five
+      questions flipping between runs. Published figures quoted to one decimal from a single
+      run report more precision than they have.</p>
+    </div>
+    <div class="find">
+      <div class="n">06</div>
+      <h3>The diagnosis predicted the fix</h3>
+      <span class="big">+37.3 predicted</span>
+      <p>Thirty-seven failed queries were hand-classified into causes before any fix was
+      built. That taxonomy predicted the business rules would recover 37.3 points. Measured:
+      36.0.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-hd">Method</div>
+  <div class="cols">
+    <div>
+      <h2>How it was measured</h2>
+      <ol>
+        <li><b>86 questions written by hand</b>, each with verified SQL and a human sign-off.
+        Seventy-five answerable; eleven with no correct answer at all.</li>
+        <li><b>The evaluator was built before the system</b> and tested in both directions —
+        26 cases proving it accepts cosmetically different queries and catches the specific
+        wrong ones.</li>
+        <li><b>Failures were classified by hand</b> into named causes, producing a prediction
+        for each intervention before any of them were built.</li>
+        <li><b>The noise floor was measured</b> by running an identical prompt four times, so
+        every later delta could be judged against it.</li>
+      </ol>
+    </div>
+    <div>
+      <h2>Known limits</h2>
+      <ul>
+        <li>Follow-up questions work by resending the conversation. <b>Not evaluated</b> —
+        the figures here are for single questions.</li>
+        <li>Eleven of 86 questions have no correct answer. Abstention was correct 7 of 11
+        times, but that metric swung by three questions across identical runs and is too
+        noisy to state precisely.</li>
+        <li>Two questions regressed when the rules were added: the model applied the status
+        exclusion to payment-row counts the rules explicitly exempt. <b>Stating an exception
+        does not stop a model generalising past it.</b></li>
+        <li>Gold SQL is DuckDB-flavoured. The method transfers; these particular queries
+        would need porting.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>Evaluation set, taxonomy and per-run results committed to the repository.</span>
+  <span>DeepSeek V4 Pro · temperature 0 · provider pinned</span>
+</footer>
+
+</div>
+
+<script>
+const VARIANTS = [
+  {
+    name: "Item price, sales only",
+    ok: true,
+    value: "R$13,494,400.74",
+    sql:
+`SELECT sum(oi.price) AS revenue
+FROM order_items oi
+JOIN orders o ON o.order_id = oi.order_id
+WHERE o.order_status NOT IN ('canceled', 'unavailable')`,
+    why: "Product price over orders that were not cancelled. This is the definition the business chose.",
+    drift: ""
+  },
+  {
+    name: "Freight included",
+    ok: false,
+    value: "R$15,735,527.03",
+    sql:
+`SELECT sum(oi.price + oi.freight_value) AS revenue
+FROM order_items oi
+JOIN orders o ON o.order_id = oi.order_id
+WHERE o.order_status NOT IN ('canceled', 'unavailable')`,
+    why: "Adds shipping. Freight is a pass-through to the carrier, not merchandise the marketplace sold.",
+    drift: "+16.6% overstated"
+  },
+  {
+    name: "What customers paid",
+    ok: false,
+    value: "R$16,008,872.12",
+    sql:
+`SELECT sum(payment_value) AS revenue
+FROM order_payments`,
+    why: "Includes freight, and includes money paid for orders that were later cancelled or never fulfilled.",
+    drift: "+18.6% overstated"
+  },
+  {
+    name: "Items joined to payments",
+    ok: false,
+    value: "R$14,105,767.00",
+    sql:
+`SELECT sum(oi.price) AS revenue
+FROM order_items oi
+JOIN orders o ON o.order_id = oi.order_id
+JOIN order_payments op ON op.order_id = oi.order_id
+WHERE o.order_status NOT IN ('canceled', 'unavailable')`,
+    why: "An order has many item rows AND many payment rows. Joining both multiplies them together.",
+    drift: "+4.5% overstated"
+  },
+  {
+    name: "No status filter",
+    ok: false,
+    value: "R$13,591,643.70",
+    sql:
+`SELECT sum(price) AS revenue
+FROM order_items`,
+    why: "Counts cancelled and unavailable orders as sales. The most common failure in the whole evaluation.",
+    drift: "+0.7% overstated"
+  }
+];
+
+const PUNCH = {
+  ok: "This is the one that is right — and nothing about the other four tabs indicates otherwise. Same warehouse, same second, no error.",
+  bad: "This ran cleanly and returned a number a dashboard would print without complaint. The only way to catch it is to read the SQL."
+};
+
+const tabs = document.getElementById('tabs');
+let active = 0;
+
+VARIANTS.forEach((v, i) => {
+  const b = document.createElement('button');
+  b.className = 'tab';
+  b.setAttribute('role', 'tab');
+  b.innerHTML = `<span class="dot ${v.ok ? 'ok' : 'sil'}"></span>${v.name}`;
+  b.onclick = () => select(i);
+  tabs.appendChild(b);
+});
+
+function select(i){
+  active = i;
+  const v = VARIANTS[i];
+  [...tabs.children].forEach((t, j) =>
+    t.setAttribute('aria-selected', j === i ? 'true' : 'false'));
+  document.getElementById('sql').textContent = v.sql;
+  document.getElementById('val').textContent = v.value;
+  document.getElementById('val').style.color =
+    v.ok ? 'var(--right)' : 'var(--ink)';
+  document.getElementById('badge').innerHTML = v.ok
+    ? '<span class="badge ok">Correct</span>'
+    : '<span class="badge sil">Silently wrong</span>';
+  document.getElementById('drift').textContent = v.drift;
+  document.getElementById('why').textContent = v.why;
+  document.getElementById('punch').textContent = v.ok ? PUNCH.ok : PUNCH.bad;
+}
+
+select(0);
+</script>
+</body>
+</html>

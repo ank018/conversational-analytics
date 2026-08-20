@@ -1,7 +1,8 @@
 .venv/
 __pycache__/
 *.pyc
-data/
+data/*
+!data/olist.duckdb
 .env
 .streamlit/secrets.toml
 reports/schema_ddl.sql

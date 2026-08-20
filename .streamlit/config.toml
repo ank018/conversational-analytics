@@ -1,0 +1,17 @@
+# Palette matched to the project page (index.html) so the demo and the
+# write-up read as one piece of work rather than two.
+
+[theme]
+base = "light"
+primaryColor = "#2f4f7a"            # mark
+backgroundColor = "#f7f8fa"         # paper
+secondaryBackgroundColor = "#ffffff"  # card
+textColor = "#16202b"               # ink
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false

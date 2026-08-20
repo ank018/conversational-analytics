@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: conversational-analytics
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /_stcore/health
+    envVars:
+      # Set the value in the Render dashboard, never here.
+      - key: OPENROUTER_API_KEY
+        sync: false
